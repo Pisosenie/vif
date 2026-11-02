@@ -3547,7 +3547,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vif"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "base64",
@@ -3580,7 +3580,7 @@ dependencies = [
 
 [[package]]
 name = "vif-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "strsim",
  "toml",
@@ -3589,7 +3589,7 @@ dependencies = [
 
 [[package]]
 name = "vif-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "etagere",
@@ -3603,7 +3603,7 @@ dependencies = [
 
 [[package]]
 name = "vif-settings"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fontdb",
  "iced",
