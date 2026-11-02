@@ -21,7 +21,33 @@ fn modifier_param(mods: ModifiersState) -> u32 {
         + 8 * u32::from(mods.super_key())
 }
 
+/// The text editing every Mac terminal does: ⌥ moves and deletes by word, ⌘ by line, the way
+/// readline and zsh read `ESC b`, `ESC f`, `ESC DEL`, ctrl-a, ctrl-e and ctrl-u.
+fn mac_editing(event: &KeyEvent, mods: ModifiersState) -> Option<&'static [u8]> {
+    if mods.control_key() || mods.shift_key() || mods.alt_key() == mods.super_key() {
+        return None;
+    }
+    let Key::Named(named) = &event.logical_key else {
+        return None;
+    };
+    match (named, mods.alt_key()) {
+        (NamedKey::Backspace, true) => Some(b"\x1b\x7f"),
+        (NamedKey::Delete, true) => Some(b"\x1bd"),
+        (NamedKey::ArrowLeft, true) => Some(b"\x1bb"),
+        (NamedKey::ArrowRight, true) => Some(b"\x1bf"),
+        (NamedKey::Backspace, false) => Some(b"\x15"),
+        (NamedKey::ArrowLeft, false) => Some(b"\x01"),
+        (NamedKey::ArrowRight, false) => Some(b"\x05"),
+        _ => None,
+    }
+}
+
 fn legacy(event: &KeyEvent, mods: ModifiersState, alt_meta: bool, mode: TermMode) -> Option<Vec<u8>> {
+    if cfg!(target_os = "macos")
+        && let Some(bytes) = mac_editing(event, mods)
+    {
+        return Some(bytes.to_vec());
+    }
     let m = 1 + u32::from(mods.shift_key()) + 2 * u32::from(mods.alt_key()) + 4 * u32::from(mods.control_key());
     let app = mode.contains(TermMode::APP_CURSOR);
     let esc = |rest: &[u8]| {
