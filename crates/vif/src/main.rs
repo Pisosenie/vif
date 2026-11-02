@@ -5,6 +5,7 @@ mod clipboard;
 mod colors;
 mod fold;
 
+mod gifplay;
 mod graphics;
 mod hints;
 mod input;
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check") => check(),
+        Some("gif") => gifplay::run(&args[1..]),
         Some("settings") => {
             window::open_settings(args.get(1).map(String::as_str));
             ExitCode::SUCCESS
@@ -81,7 +83,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
-            println!("{USAGE}\n{}", theme::USAGE);
+            println!("{USAGE}\n{}\n{}", theme::USAGE, gifplay::USAGE);
             ExitCode::SUCCESS
         }
         Some("-e" | "--command") if args.len() > 1 => run(Some(args[1..].to_vec()), None, false),

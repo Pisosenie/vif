@@ -33,14 +33,7 @@ fn read(path: &Path, blur: u8) -> Result<Picture, String> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (path, data.len(), &data[..data.len().min(4096)], blur).hash(&mut hasher);
     let key = hasher.finish() | 1 << 63;
-    let (rgba, width, height) = if data.starts_with(b"\x89PNG") {
-        let image = crate::graphics::png(&data).map_err(|e| e.trim_start_matches("EBADPNG:").to_owned())?;
-        (image.rgba, image.width, image.height)
-    } else if data.starts_with(&[0xff, 0xd8]) {
-        jpeg(&data)?
-    } else {
-        return Err("only PNG and JPEG pictures".to_owned());
-    };
+    let (rgba, width, height) = decode(&data)?;
     let (rgba, width, height) = shrink(rgba, width, height);
     let rgba = if blur > 0 {
         blurred(rgba, width, height, u32::from(blur))
@@ -53,6 +46,18 @@ fn read(path: &Path, blur: u8) -> Result<Picture, String> {
         width,
         height,
     })
+}
+
+/// A PNG or JPEG as RGBA, with its width and height.
+pub fn decode(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    if data.starts_with(b"\x89PNG") {
+        let image = crate::graphics::png(data).map_err(|e| e.trim_start_matches("EBADPNG:").to_owned())?;
+        Ok((image.rgba, image.width, image.height))
+    } else if data.starts_with(&[0xff, 0xd8]) {
+        jpeg(data)
+    } else {
+        Err("only PNG and JPEG pictures".to_owned())
+    }
 }
 
 fn jpeg(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {

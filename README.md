@@ -56,6 +56,7 @@ One terminal that drops in from the top of the screen and goes away again, its s
 - **A picture behind the text**, faded and blurred once when it loads, so it costs nothing after.
 - **Shaders over the whole window** in Shadertoy's GLSL, the format Ghostty uses, so its shader collections work as they are. `crt`, `bloom` and a cursor trail come with vif; they draw only while something moves.
 - **Fonts**: a weight for regular and bold, a cursive italic from another face, OpenType features like `ss01`.
+- **GIFs in text**: `vif gif cat.gif` plays a GIF as colored ASCII where you are, `--blocks` draws it in ▀ halves at twice the detail, `--text` turns it into plain text frames. It scales every frame once before it starts and then only writes the lines that change, so it plays at under 1% CPU in 8 MB, in any terminal.
 
 ![The crt shader: the screen curved, with scanlines and darker corners, over code in nvim](docs/retro.png)
 
