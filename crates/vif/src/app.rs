@@ -44,6 +44,7 @@ pub enum UserEvent {
     /// Show or hide the quick terminal.
     Quick,
     /// Settings… in the app menu.
+    #[cfg(target_os = "macos")]
     Settings,
     /// A window of its own for a session.
     OpenSession(String),
@@ -136,6 +137,7 @@ pub struct App {
     /// Started by `vif quick`: the quick terminal is the first window.
     quick_start: bool,
     /// Another app was in front when the quick terminal came, and gets the focus back after.
+    #[cfg(target_os = "macos")]
     quick_back: bool,
     /// The quick terminal has had the focus since it last showed, so losing it may hide it.
     quick_focused: bool,
@@ -187,6 +189,7 @@ impl App {
             quick: None,
             quick_saved,
             quick_start: quick,
+            #[cfg(target_os = "macos")]
             quick_back: false,
             quick_focused: false,
             listening,
@@ -393,6 +396,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.open(event_loop, None, false);
             }
             UserEvent::Quick => self.toggle_quick(event_loop),
+            #[cfg(target_os = "macos")]
             UserEvent::Settings => crate::window::open_settings(None),
             UserEvent::OpenSession(id) => {
                 let saved = Saved {
