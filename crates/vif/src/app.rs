@@ -43,6 +43,8 @@ pub enum UserEvent {
     ConfigChanged,
     /// Show or hide the quick terminal.
     Quick,
+    /// Settings… in the app menu.
+    Settings,
     /// A window of its own for a session.
     OpenSession(String),
     CloseWindow(WindowId),
@@ -316,6 +318,8 @@ impl App {
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "macos")]
+        crate::menu::install(self.shared.proxy.clone());
+        #[cfg(target_os = "macos")]
         if self.listening && self.hotkey.is_none() {
             match crate::quick::Hotkey::new(self.shared.proxy.clone()) {
                 Ok(mut hotkey) => {
@@ -389,6 +393,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.open(event_loop, None, false);
             }
             UserEvent::Quick => self.toggle_quick(event_loop),
+            UserEvent::Settings => crate::window::open_settings(None),
             UserEvent::OpenSession(id) => {
                 let saved = Saved {
                     tabs: vec![crate::layouts::SavedTab {

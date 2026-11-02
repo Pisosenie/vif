@@ -31,6 +31,7 @@ mod footer;
 mod history;
 mod hud;
 mod keys;
+pub use keys::open_settings;
 pub mod looks;
 mod mouse;
 mod overlays;
@@ -252,8 +253,7 @@ impl Win {
         .into_iter()
         .find(|m| caps.alpha_modes.contains(m))
         .unwrap_or(caps.alpha_modes[0]);
-        let mut renderer = Renderer::new(&gpu.device, &gpu.queue, format, font_config(&config, scale, 0.0));
-        renderer.set_gl(gpu.adapter.get_info().backend == wgpu::Backend::Gl);
+        let renderer = Renderer::new(&gpu.device, &gpu.queue, format, font_config(&config, scale, 0.0));
         crate::app::mark("renderer");
         let m = renderer.metrics();
         let (top, bottom) = insets(&config, scale, 1);

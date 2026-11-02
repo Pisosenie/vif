@@ -11,6 +11,8 @@ mod input;
 mod layout;
 mod layouts;
 mod marks;
+#[cfg(target_os = "macos")]
+mod menu;
 mod niri;
 mod notify;
 mod pane;
@@ -40,6 +42,7 @@ const USAGE: &str = "usage: vif [-e command [args…]]
        vif attach NAME|ID          a window for one of them
        vif quick                   show or hide the quick terminal (bind it to a key)
        vif niri                    a fragment for niri's config: the quick terminal's place and key
+       vif settings [PAGE]         the settings window, on a page like `font` or `background`
        vif --version";
 
 fn main() -> ExitCode {
@@ -47,6 +50,10 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check") => check(),
+        Some("settings") => {
+            window::open_settings(args.get(1).map(String::as_str));
+            ExitCode::SUCCESS
+        }
         Some("niri") => {
             print!("{}", niri::fragment(&Config::load().0));
             ExitCode::SUCCESS

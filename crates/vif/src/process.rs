@@ -7,12 +7,48 @@ use std::path::PathBuf;
 /// The process group in front on the terminal, falling back to the shell.
 fn front(pty: &File, shell: u32) -> i32 {
     let front = unsafe { libc::tcgetpgrp(pty.as_raw_fd()) };
-    if front > 0 { front } else { shell as i32 }
+    if front > 0 {
+        return front;
+    }
+    // A session's terminal isn't vif's own, so on macOS only the shell can say what is in front.
+    #[cfg(target_os = "macos")]
+    if let Some(front) = info(own_shell(shell)).map(|i| i.e_tpgid as i32).filter(|p| *p > 0) {
+        return front;
+    }
+    own_shell(shell)
 }
 
 /// The folder of whatever runs in front in the terminal, or of the shell itself.
 pub fn cwd(pty: &File, shell: u32) -> Option<PathBuf> {
-    dir(front(pty, shell)).or_else(|| dir(shell as i32))
+    dir(front(pty, shell)).or_else(|| dir(own_shell(shell)))
+}
+
+/// macOS starts shells through `login`, which runs as root and answers nothing; the shell is its
+/// child.
+#[cfg(target_os = "macos")]
+fn own_shell(pid: u32) -> i32 {
+    let mut kids = [0 as libc::pid_t; 4];
+    let size = size_of_val(&kids) as i32;
+    let n = unsafe { libc::proc_listchildpids(pid as i32, kids.as_mut_ptr().cast(), size) };
+    let login = args(pid as i32).is_none_or(|argv| argv.first().is_some_and(|a| a.ends_with("login")));
+    if n > 0 && login && kids[0] > 0 {
+        kids[0]
+    } else {
+        pid as i32
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn own_shell(pid: u32) -> i32 {
+    pid as i32
+}
+
+#[cfg(target_os = "macos")]
+fn info(pid: i32) -> Option<libc::proc_bsdinfo> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_bsdinfo>() as i32;
+    let read = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    (read == size).then_some(info)
 }
 
 /// Whether a command line is a shell's own, like `-zsh`.

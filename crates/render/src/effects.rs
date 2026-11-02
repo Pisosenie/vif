@@ -1,5 +1,9 @@
 //! Shaders over the whole window, in Shadertoy's GLSL the way Ghostty takes them: the frame is
-//! drawn into a texture, each shader reads the one before it, and the last draws to the window.
+//! drawn into a texture, each shader reads the one before it, and a last copy puts it in the window.
+//!
+//! The frames between them are kept bottom row first, the way GL and Shadertoy keep theirs, so a
+//! shader's `fragCoord` and texture coordinates both start at the bottom left; the copy turns
+//! the frame the right way up.
 
 use std::borrow::Cow;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -35,7 +39,7 @@ layout(location = 0) out vec4 vif_color;
 const MAIN: &str = "
 void main() {
     vec4 color = vec4(0.0);
-    mainImage(color, vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y));
+    mainImage(color, gl_FragCoord.xy);
     vif_color = color;
 }
 ";
@@ -48,8 +52,7 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 }
 ";
 
-/// Copies the last shader's frame to the window. GL draws into a window the other way up from into
-/// a texture, so this reads the texture by the vertices' place, turned to match.
+/// Copies the last shader's frame to the window, the bottom row of the texture at the bottom.
 const BLIT: &str = "
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -136,12 +139,10 @@ pub struct Effects {
 
 impl Effects {
     /// Compiles each (name, GLSL source); a shader that doesn't compile is an error naming its line.
-    /// `gl` adds a last copy to the window, which GL needs.
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         sources: &[(String, String)],
-        gl: bool,
     ) -> Result<Self, String> {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("vif effect"),
@@ -210,7 +211,7 @@ impl Effects {
                 cache: None,
             }));
         }
-        if gl {
+        {
             let blit = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("vif blit"),
                 source: wgpu::ShaderSource::Wgsl(BLIT.into()),
@@ -487,52 +488,60 @@ mod tests {
                 faces: crate::Faces::default(),
             };
             let mut renderer = Renderer::new(&device, &queue, format, font);
-            renderer.set_effects(&[("copy".to_owned(), copy.to_owned())]).unwrap();
-            let mut scene = Scene::default();
-            scene.back.push(Rect::fill(0.0, 0.0, 8.0, 4.0, [1.0, 0.0, 0.0, 1.0]));
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: None,
-                size: wgpu::Extent3d {
-                    width: 8,
-                    height: 8,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&Default::default());
-            renderer.render(&view, 8, 8, wgpu::Color::BLACK, &scene);
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size: 256 * 8,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.copy_texture_to_buffer(
-                texture.as_image_copy(),
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(256),
-                        rows_per_image: Some(8),
+            // One shader and a chain of two must both come out the right way up.
+            for count in [1, 2] {
+                let chain: Vec<(String, String)> = (0..count).map(|i| (format!("copy{i}"), copy.to_owned())).collect();
+                renderer.set_effects(&chain).unwrap();
+                let mut scene = Scene::default();
+                scene.back.push(Rect::fill(0.0, 0.0, 8.0, 4.0, [1.0, 0.0, 0.0, 1.0]));
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: None,
+                    size: wgpu::Extent3d {
+                        width: 8,
+                        height: 8,
+                        depth_or_array_layers: 1,
                     },
-                },
-                texture.size(),
-            );
-            queue.submit([encoder.finish()]);
-            buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-            let data = buffer.slice(..).get_mapped_range();
-            let backend = adapter.get_info().backend;
-            assert_eq!(data[0], 255, "{backend:?}: the top should be red");
-            assert_eq!(data[256 * 7], 0, "{backend:?}: the bottom should be black");
-            eprintln!("{backend:?} draws shaders the right way up");
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&Default::default());
+                renderer.render(&view, 8, 8, wgpu::Color::BLACK, &scene);
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: 256 * 8,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = device.create_command_encoder(&Default::default());
+                encoder.copy_texture_to_buffer(
+                    texture.as_image_copy(),
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(256),
+                            rows_per_image: Some(8),
+                        },
+                    },
+                    texture.size(),
+                );
+                queue.submit([encoder.finish()]);
+                buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                let data = buffer.slice(..).get_mapped_range();
+                let backend = adapter.get_info().backend;
+                assert_eq!(data[0], 255, "{backend:?}, {count} shaders: the top should be red");
+                assert_eq!(
+                    data[256 * 7],
+                    0,
+                    "{backend:?}, {count} shaders: the bottom should be black"
+                );
+                eprintln!("{backend:?} draws {count} shaders the right way up");
+            }
         }
     }
 

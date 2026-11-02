@@ -217,8 +217,6 @@ pub struct Renderer {
     frame: u64,
     format: wgpu::TextureFormat,
     effects: Option<Effects>,
-    /// Drawing through GL, which turns shader output over on the way to a window.
-    gl: bool,
 }
 
 impl Renderer {
@@ -392,7 +390,6 @@ impl Renderer {
             frame: 0,
             format,
             effects: None,
-            gl: false,
         }
     }
 
@@ -779,14 +776,9 @@ impl Renderer {
     pub fn set_effects(&mut self, sources: &[(String, String)]) -> Result<(), String> {
         self.effects = None;
         if !sources.is_empty() {
-            self.effects = Some(Effects::new(&self.device, self.format, sources, self.gl)?);
+            self.effects = Some(Effects::new(&self.device, self.format, sources)?);
         }
         Ok(())
-    }
-
-    /// Says the frames go to a window through GL.
-    pub fn set_gl(&mut self, gl: bool) {
-        self.gl = gl;
     }
 
     pub fn effects(&mut self) -> Option<&mut Effects> {

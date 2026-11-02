@@ -230,14 +230,27 @@ impl Win {
         };
         let gap = 6.0 * scale;
         let inner = 8.0 * scale;
-        let widths: Vec<f32> = acts
-            .iter()
-            .map(|(_, label, key)| (label.chars().count() + key.chars().count() + 1) as f32 * cw + 2.0 * inner)
-            .collect();
-        let total = widths.iter().sum::<f32>() + gap * (acts.len() as f32 + 1.0);
+        let measure = |acts: &[(Act, String, &str)]| -> (Vec<f32>, f32) {
+            let widths: Vec<f32> = acts
+                .iter()
+                .map(|(_, label, key)| (label.chars().count() + key.chars().count() + 1) as f32 * cw + 2.0 * inner)
+                .collect();
+            let total = widths.iter().sum::<f32>() + gap * (acts.len() as f32 + 1.0);
+            (widths, total)
+        };
+        let (mut widths, mut total) = measure(&acts);
+        let mut acts = acts;
+        // In a narrow pane the buttons keep only their first word.
+        if total > area.w * 0.75 {
+            for (_, label, _) in &mut acts {
+                *label = label.split_whitespace().next().unwrap_or_default().to_owned();
+            }
+            (widths, total) = measure(&acts);
+        }
         let bh = ch + 10.0 * scale;
-        let bx = (x + w - total - 6.0 * scale).max(area.x);
-        let by = (y - bh / 2.0).max(area.y - 4.0 * scale).round();
+        // Inside the block at its top right, over the end of the command line.
+        let bx = (x + w - total - 4.0 * scale).max(area.x);
+        let by = (y + 3.0 * scale).round();
         let panel = mix(scheme.fg(), scheme.bg(), 0.9);
         scene
             .front

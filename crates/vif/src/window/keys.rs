@@ -467,7 +467,7 @@ pub(super) fn quote(s: &str) -> String {
 }
 
 /// The settings window, on a page if one is named.
-pub(super) fn open_settings(page: Option<&str>) {
+pub fn open_settings(page: Option<&str>) {
     let exe = std::env::current_exe().ok();
     let sibling = exe
         .as_ref()
