@@ -3,10 +3,12 @@ mod archive;
 mod blocks;
 mod clipboard;
 mod colors;
+mod facts;
 mod fold;
 
 mod gifplay;
 mod graphics;
+mod greet;
 mod hints;
 mod input;
 mod layout;
@@ -52,6 +54,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("check") => check(),
         Some("gif") => gifplay::run(&args[1..]),
+        Some("greet") => greet::run(&args[1..]),
         Some("settings") => {
             window::open_settings(args.get(1).map(String::as_str));
             ExitCode::SUCCESS
@@ -83,7 +86,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
-            println!("{USAGE}\n{}\n{}", theme::USAGE, gifplay::USAGE);
+            println!("{USAGE}\n{}\n{}\n{}", theme::USAGE, gifplay::USAGE, greet::USAGE);
             ExitCode::SUCCESS
         }
         Some("-e" | "--command") if args.len() > 1 => run(Some(args[1..].to_vec()), None, false),

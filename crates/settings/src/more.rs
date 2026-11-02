@@ -114,7 +114,13 @@ impl Settings {
     }
 
     /// A text field that writes on Enter: its draft while typing, else what the config says.
-    fn typed<'a>(&'a self, key: &'static str, now: String, hint: &'a str, width: f32) -> Element<'a, Message> {
+    pub(crate) fn typed<'a>(
+        &'a self,
+        key: &'static str,
+        now: String,
+        hint: &'a str,
+        width: f32,
+    ) -> Element<'a, Message> {
         let value = self.drafts.get(key).cloned().unwrap_or(now);
         text_input(hint, &value)
             .on_input(move |v| Message::More(Change::Draft(key, v)))
@@ -154,13 +160,19 @@ impl Settings {
         column![
             field(
                 "Picture",
-                self.typed(
-                    "background.image",
-                    c.background.image.clone().unwrap_or_default(),
-                    "~/Pictures/wall.jpg",
-                    320.0
-                ),
-                Some("PNG or JPEG behind the text; Enter sets it"),
+                row![
+                    self.typed(
+                        "background.image",
+                        c.background.image.clone().unwrap_or_default(),
+                        "~/Pictures/wall.jpg",
+                        320.0
+                    ),
+                    crate::greeting::chooser("background.image", &["png", "jpg", "jpeg"]),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+                Some("PNG or JPEG behind the text; Enter sets a typed path"),
             ),
             field(
                 "Fit",

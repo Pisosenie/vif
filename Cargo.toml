@@ -27,6 +27,7 @@ open = "5"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
 iced = { version = "0.14", features = ["tokio"] }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 
 [profile.release]
 lto = "fat"

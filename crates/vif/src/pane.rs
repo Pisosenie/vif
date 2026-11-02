@@ -16,7 +16,7 @@ use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{self, Term, TermDamage, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
-use vif_config::{BadgeShow, Badges, Config, Osc52};
+use vif_config::{BadgeShow, Badges, Config, GreetingShow, Osc52};
 use vif_render::{LineCell, Metrics, RECT_CURL, RECT_DASHED, RECT_DOTTED, RECT_HOLLOW, Rect, Renderer, Scene, Style};
 use winit::event_loop::EventLoopProxy;
 use winit::window::WindowId;
@@ -86,6 +86,8 @@ pub struct Spawn<'a> {
     pub window: WindowId,
     /// A session left by a closed window, to take over instead of starting a shell.
     pub attach: Option<String>,
+    /// The first shell of its window, which plays the greeting if there is one.
+    pub first: bool,
 }
 
 /// A built row: what it draws, where its image cells are, and the command typed on it.
@@ -232,6 +234,20 @@ impl Pane {
         env.insert("TERM_PROGRAM_VERSION".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
         if let Some(dir) = &spawn.term.1 {
             env.insert("TERMINFO".to_owned(), dir.display().to_string());
+        }
+        let greeting = &spawn.config.greeting;
+        let greet = match greeting.show {
+            GreetingShow::Off => false,
+            GreetingShow::Window => spawn.first,
+            GreetingShow::Always => true,
+        };
+        if greet
+            && spawn.attach.is_none()
+            && spawn.command.is_none()
+            && (greeting.file.is_some() || greeting.info)
+            && let Ok(me) = std::env::current_exe()
+        {
+            env.insert("VIF_GREET".to_owned(), me.display().to_string());
         }
         let program = match spawn.command {
             Some([program, args @ ..]) => Some((program.clone(), args.to_vec())),

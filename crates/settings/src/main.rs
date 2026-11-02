@@ -1,4 +1,5 @@
 mod gallery;
+mod greeting;
 mod more;
 mod preview;
 mod style;
@@ -63,13 +64,14 @@ enum Page {
     Cursor,
     Tabs,
     Quick,
+    Greeting,
     Rules,
     Keys,
     Terminal,
 }
 
 impl Page {
-    const ALL: [Page; 11] = [
+    const ALL: [Page; 12] = [
         Page::Themes,
         Page::Font,
         Page::Colors,
@@ -78,6 +80,7 @@ impl Page {
         Page::Cursor,
         Page::Tabs,
         Page::Quick,
+        Page::Greeting,
         Page::Rules,
         Page::Keys,
         Page::Terminal,
@@ -93,6 +96,7 @@ impl Page {
             Page::Cursor => "Cursor",
             Page::Tabs => "Tabs and splits",
             Page::Quick => "Quick terminal",
+            Page::Greeting => "Greeting",
             Page::Rules => "Rules",
             Page::Keys => "Keys",
             Page::Terminal => "Terminal",
@@ -109,6 +113,7 @@ impl Page {
             Page::Cursor => "How the cursor looks when nothing asks for another shape.",
             Page::Tabs => "Where the tabs sit and how they look, and how splits part.",
             Page::Quick => "One window that drops in from the top of the screen, its shell always running.",
+            Page::Greeting => "A picture played in text when a shell starts, with this machine beside it.",
             Page::Rules => {
                 "Hosts and folders that change how a pane looks, so production never looks like your laptop."
             }
@@ -127,6 +132,7 @@ impl Page {
             Page::Cursor => "cursor",
             Page::Tabs => "tabs",
             Page::Quick => "quick",
+            Page::Greeting => "greeting",
             Page::Rules => "rules",
             Page::Keys => "keys",
             Page::Terminal => "terminal",
@@ -210,6 +216,7 @@ enum Message {
     Families(Vec<String>),
     Key(keyboard::Event),
     More(more::Change),
+    Greet(greeting::Change),
 }
 
 struct Settings {
@@ -321,6 +328,7 @@ impl Settings {
         match message {
             Message::Page(page) => self.page = page,
             Message::More(change) => self.change(change),
+            Message::Greet(change) => return self.greet(change),
             Message::Family(family) => self.edit(|e| e.set("font", "family", family)),
             Message::Size(v) => self.edit(|e| e.set_float("font", "size", v)),
             Message::LineHeight(v) => self.edit(|e| e.set_float("font", "line_height", v)),
@@ -710,6 +718,7 @@ impl Settings {
             Page::Tabs => self.tabs(),
             Page::Effects => self.effects_page(),
             Page::Quick => self.quick_page(),
+            Page::Greeting => self.greeting_page(),
             Page::Rules => self.rules_page(),
             Page::Font => {
                 let family = pick_list(self.families.clone(), Some(c.font.family.clone()), Message::Family)

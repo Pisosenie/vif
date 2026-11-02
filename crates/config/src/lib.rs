@@ -75,6 +75,32 @@ pub struct Config {
     pub rules: Vec<Rule>,
     pub background: Background,
     pub quick: Quick,
+    pub greeting: Greeting,
+}
+
+/// A picture played in text above the first prompt, the way people run neofetch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Greeting {
+    pub show: GreetingShow,
+    /// A GIF, PNG or JPEG, found the way `background.image` is.
+    pub file: Option<String>,
+    /// ▀ halves in color rather than characters.
+    pub blocks: bool,
+    /// Who, where and on what, beside the picture.
+    pub info: bool,
+    /// Lines the picture may take.
+    pub height: u16,
+    /// Times a GIF plays through before the prompt.
+    pub loops: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GreetingShow {
+    Off,
+    /// The first shell of each window.
+    Window,
+    /// Every new shell, tabs and splits too.
+    Always,
 }
 
 /// The quick terminal, which drops in from the top of the screen.
@@ -420,6 +446,14 @@ impl Default for Config {
                 key: String::new(),
                 height: 0.45,
                 hide_on_blur: true,
+            },
+            greeting: Greeting {
+                show: GreetingShow::Off,
+                file: None,
+                blocks: true,
+                info: true,
+                height: 12,
+                loops: 1,
             },
         }
     }

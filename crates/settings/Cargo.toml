@@ -12,3 +12,4 @@ iced.workspace = true
 wgpu.workspace = true
 fontdb.workspace = true
 open.workspace = true
+rfd.workspace = true

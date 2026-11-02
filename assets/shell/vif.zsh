@@ -1,5 +1,27 @@
-# OSC 133 marks, so vif knows where each prompt, command and its output are.
+# What vif adds to zsh: the greeting, a TERM for ssh, and OSC 133 marks.
 builtin autoload -Uz add-zsh-hook
+
+# The greeting plays once, before the first prompt, after everything the rc files print.
+if [[ -n "${VIF_GREET-}" ]]; then
+    builtin typeset -g _vif_greet_with="$VIF_GREET"
+    _vif_greet() {
+        add-zsh-hook -d precmd _vif_greet
+        "$_vif_greet_with" greet
+        builtin unset _vif_greet_with
+        builtin unfunction _vif_greet
+    }
+    add-zsh-hook precmd _vif_greet
+fi
+builtin unset VIF_GREET
+
+# Hosts rarely know xterm-vif, so ssh takes a TERM they do; your own ssh alias or function wins.
+if [[ $TERM == xterm-vif ]]; then
+    ssh() { TERM=xterm-256color command ssh "$@" }
+fi
+
+# The rest are OSC 133 marks, so vif knows where each prompt, command and its output are.
+[[ -n "${VIF_MARKS-}" ]] || builtin return 0
+builtin unset VIF_MARKS
 
 # Powerlevel10k rebuilds the prompt itself, and marks it when told to, as it does for kitty.
 builtin typeset -gri __p9k_force_term_shell_integration=1
@@ -21,8 +43,3 @@ _vif_preexec() {
 
 add-zsh-hook precmd _vif_precmd
 add-zsh-hook preexec _vif_preexec
-
-# Hosts rarely know xterm-vif, so ssh takes a TERM they do; your own ssh alias or function wins.
-if [[ $TERM == xterm-vif ]]; then
-    ssh() { TERM=xterm-256color command ssh "$@" }
-fi

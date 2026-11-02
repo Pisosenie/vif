@@ -4,14 +4,14 @@ use toml::Spanned;
 use toml::de::{DeString, DeTable, DeValue};
 
 use crate::{
-    ACTIONS, BadgeShow, Config, CursorShape, Decorations, Diagnostic, Divider, Fit, OptionAsAlt, Osc52, Rgb,
-    TabPosition, TabShow, TabStyle, themes,
+    ACTIONS, BadgeShow, Config, CursorShape, Decorations, Diagnostic, Divider, Fit, GreetingShow, OptionAsAlt, Osc52,
+    Rgb, TabPosition, TabShow, TabStyle, themes,
 };
 
 type Key<'i> = Spanned<DeString<'i>>;
 type Value<'i> = Spanned<DeValue<'i>>;
 
-const SECTIONS: [&str; 12] = [
+const SECTIONS: [&str; 13] = [
     "font",
     "colors",
     "window",
@@ -24,8 +24,15 @@ const SECTIONS: [&str; 12] = [
     "hints",
     "background",
     "quick",
+    "greeting",
 ];
 const QUICK: [&str; 3] = ["key", "height", "hide_on_blur"];
+const GREETING: [&str; 6] = ["show", "file", "blocks", "info", "height", "loops"];
+const GREETING_SHOW: [(&str, GreetingShow); 3] = [
+    ("off", GreetingShow::Off),
+    ("window", GreetingShow::Window),
+    ("always", GreetingShow::Always),
+];
 const BACKGROUND: [&str; 4] = ["image", "fit", "dim", "blur"];
 const FITS: [(&str, Fit); 5] = [
     ("cover", Fit::Cover),
@@ -130,7 +137,7 @@ const OPTION_AS_ALT: [(&str, OptionAsAlt); 4] = [
 
 /// Every key vif.toml knows, as `section.key`, and the top-level ones bare.
 pub fn known() -> Vec<String> {
-    let sections: [(&str, &[&str]); 11] = [
+    let sections: [(&str, &[&str]); 12] = [
         ("font", &FONT),
         ("colors", &COLORS),
         ("window", &WINDOW),
@@ -142,6 +149,7 @@ pub fn known() -> Vec<String> {
         ("hints", &HINTS),
         ("background", &BACKGROUND),
         ("quick", &QUICK),
+        ("greeting", &GREETING),
     ];
     let mut out: Vec<String> = TOP.iter().map(|k| (*k).to_owned()).collect();
     for (section, keys) in sections {
@@ -227,6 +235,7 @@ impl Reader<'_> {
                 "hints" => self.hints(section, config),
                 "background" => self.background(section, config),
                 "quick" => self.quick(section, config),
+                "greeting" => self.greeting(section, config),
                 _ => self.keys(section, config),
             }
         }
@@ -381,6 +390,33 @@ impl Reader<'_> {
                 "height" => quick.height = self.float(key, value, 0.15..=1.0).unwrap_or(quick.height),
                 "hide_on_blur" => quick.hide_on_blur = self.boolean(key, value).unwrap_or(quick.hide_on_blur),
                 _ => self.unknown(key, "quick setting", &QUICK),
+            }
+        }
+    }
+
+    fn greeting(&mut self, table: &DeTable, config: &mut Config) {
+        let greeting = &mut config.greeting;
+        for (key, value) in table.iter() {
+            match key.get_ref().as_ref() {
+                "show" => greeting.show = self.choice(key, value, &GREETING_SHOW).unwrap_or(greeting.show),
+                "file" => {
+                    if let Some(v) = self.string(key, value) {
+                        greeting.file = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+                    }
+                }
+                "blocks" => greeting.blocks = self.boolean(key, value).unwrap_or(greeting.blocks),
+                "info" => greeting.info = self.boolean(key, value).unwrap_or(greeting.info),
+                "height" => {
+                    if let Some(v) = self.integer(key, value, 3..=60) {
+                        greeting.height = v as u16;
+                    }
+                }
+                "loops" => {
+                    if let Some(v) = self.integer(key, value, 1..=10) {
+                        greeting.loops = v as u8;
+                    }
+                }
+                _ => self.unknown(key, "greeting setting", &GREETING),
             }
         }
     }
@@ -948,6 +984,17 @@ mod tests {
         let fixed = diagnostics[0].fix.as_ref().unwrap().apply(src).unwrap();
         assert!(fixed.contains("\nopacity = 0.9\n"));
         assert_eq!(diagnostics[1].line, 6);
+    }
+
+    #[test]
+    fn greeting_reads_its_section() {
+        let src = "[greeting]\nshow = \"always\"\nfile = \" ~/cat.gif \"\nblocks = false\nheight = 80\n";
+        let (config, diagnostics) = document(src);
+        assert_eq!(config.greeting.show, GreetingShow::Always);
+        assert_eq!(config.greeting.file.as_deref(), Some("~/cat.gif"));
+        assert!(!config.greeting.blocks);
+        assert_eq!(config.greeting.height, 12);
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]

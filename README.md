@@ -57,6 +57,7 @@ One terminal that drops in from the top of the screen and goes away again, its s
 - **Shaders over the whole window** in Shadertoy's GLSL, the format Ghostty uses, so its shader collections work as they are. `crt`, `bloom` and a cursor trail come with vif; they draw only while something moves.
 - **Fonts**: a weight for regular and bold, a cursive italic from another face, OpenType features like `ss01`.
 - **GIFs in text**: `vif gif cat.gif` plays a GIF as colored ASCII where you are, `--blocks` draws it in ▀ halves at twice the detail, `--text` turns it into plain text frames. It scales every frame once before it starts and then only writes the lines that change, so it plays at under 1% CPU in 8 MB, in any terminal.
+- **A greeting, like neofetch**: `[greeting] show = "window"` plays a GIF (or shows a PNG or JPEG) above the first prompt of each window, with who you are, the system, the shell, the CPU, the memory and the 16 colors beside it. The picture stays and the prompt comes up under it; it waits for your rc files, plays once (or `loops` times), and ctrl-c cuts it short. In Settings pick the file with Choose…, or run `vif greet` in any terminal.
 
 ![The crt shader: the screen curved, with scanlines and darker corners, over code in nvim](docs/retro.png)
 
@@ -325,6 +326,14 @@ running = "●"
 
 [hints]
 alphabet = "asdfghjklqwertyuiopzxcvbnm"
+
+[greeting]
+show = "off"               # "window" plays it in each new window's first shell, "always" in every new shell
+file = ""                  # a GIF, PNG or JPEG, like "~/Pictures/cat.gif"
+blocks = true              # ▀ halves in color; false draws characters
+info = true                # who, the system, the shell, the colors beside it
+height = 12                # lines the picture may take
+loops = 1                  # times a GIF plays before the prompt
 
 [quick]
 key = ""                   # macOS, like "ctrl+alt+space"; elsewhere bind `vif quick`

@@ -561,6 +561,7 @@ impl Win {
             proxy: shared.proxy.clone(),
             window: self.window.id(),
             attach,
+            first: self.panes.is_empty(),
         };
         let pane = Pane::spawn(id, spawn, self.content(), self.renderer.metrics())?;
         self.panes.insert(id, pane);

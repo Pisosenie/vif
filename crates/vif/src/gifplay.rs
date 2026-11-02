@@ -3,6 +3,7 @@
 //! lines that changed, in the GIF's own time, so it costs next to nothing while it runs.
 
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -31,9 +32,15 @@ struct Raw {
     delay: Duration,
 }
 
-struct Frame {
-    lines: Vec<String>,
-    delay: Duration,
+pub(crate) struct Frame {
+    pub lines: Vec<String>,
+    pub delay: Duration,
+}
+
+pub(crate) struct Clip {
+    pub frames: Vec<Frame>,
+    pub cols: usize,
+    pub rows: usize,
 }
 
 pub fn run(args: &[String]) -> ExitCode {
@@ -69,41 +76,17 @@ fn usage() -> ExitCode {
 }
 
 fn play(path: &str, options: &Options) -> Result<(), String> {
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let (raw, width, height) = if data.starts_with(b"GIF8") {
-        frames(&data)?
-    } else {
-        let (rgba, w, h) = crate::wallpaper::decode(&data)?;
-        (
-            vec![Raw {
-                rgba,
-                delay: Duration::ZERO,
-            }],
-            w,
-            h,
-        )
-    };
     let (cols, rows, cell) = screen();
-    let rows = rows.saturating_sub(1).max(4);
-    let (cols, rows) = fit(width, height, options.width.unwrap_or(cols), rows, cell);
     let text = options.text;
-    let mono = options.mono || text;
-    drop(data);
-    // Only the scaled samples stay; the full frames go before anything plays.
-    let delays: Vec<Duration> = raw.iter().map(|r| r.delay).collect();
-    let samples: Vec<Vec<[u8; 4]>> = raw
-        .into_iter()
-        .map(|r| shrink(&r.rgba, width, height, cols, rows * 2))
-        .collect();
-    let range = levels(&samples);
-    let frames: Vec<Frame> = samples
-        .into_iter()
-        .zip(delays)
-        .map(|(samples, delay)| Frame {
-            lines: draw(&samples, cols, rows, options.blocks && !text, mono, range),
-            delay,
-        })
-        .collect();
+    let clip = load(
+        Path::new(path),
+        options.blocks && !text,
+        options.mono || text,
+        options.width.unwrap_or(cols),
+        rows.saturating_sub(1).max(4),
+        cell,
+    )?;
+    let frames = clip.frames;
     if text {
         let mut out = io::stdout().lock();
         for (i, frame) in frames.iter().enumerate() {
@@ -122,11 +105,47 @@ fn play(path: &str, options: &Options) -> Result<(), String> {
         }
         return Ok(());
     }
-    run_frames(&frames, cols, rows, options.once)
+    run_frames(&frames, clip.cols, clip.rows, options.once)
+}
+
+/// A picture drawn in text at most `cols` by `rows` cells, every frame ready to write.
+pub(crate) fn load(path: &Path, blocks: bool, mono: bool, cols: usize, rows: usize, cell: f64) -> Result<Clip, String> {
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    let (raw, width, height) = if data.starts_with(b"GIF8") {
+        frames(&data)?
+    } else {
+        let (rgba, w, h) = crate::wallpaper::decode(&data)?;
+        (
+            vec![Raw {
+                rgba,
+                delay: Duration::ZERO,
+            }],
+            w,
+            h,
+        )
+    };
+    drop(data);
+    let (cols, rows) = fit(width, height, cols, rows, cell);
+    // Only the scaled samples stay; the full frames go before anything plays.
+    let delays: Vec<Duration> = raw.iter().map(|r| r.delay).collect();
+    let samples: Vec<Vec<[u8; 4]>> = raw
+        .into_iter()
+        .map(|r| shrink(&r.rgba, width, height, cols, rows * 2))
+        .collect();
+    let range = levels(&samples);
+    let frames = samples
+        .into_iter()
+        .zip(delays)
+        .map(|(samples, delay)| Frame {
+            lines: draw(&samples, cols, rows, blocks, mono, range),
+            delay,
+        })
+        .collect();
+    Ok(Clip { frames, cols, rows })
 }
 
 /// The terminal's columns and lines, and how many times taller than wide a cell is.
-fn screen() -> (usize, usize, f64) {
+pub(crate) fn screen() -> (usize, usize, f64) {
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 || size.ws_col == 0 {
         return (80, 24, 2.0);

@@ -1,6 +1,6 @@
-//! Shell integration: the shell marks its prompts, commands and output (OSC 133) without the
-//! user touching their rc files. zsh comes in through ZDOTDIR, bash through --rcfile; fish 4
-//! marks prompts on its own.
+//! Shell integration: the shell marks its prompts, commands and output (OSC 133) and plays the
+//! greeting, without the user touching their rc files. zsh comes in through ZDOTDIR, bash
+//! through --rcfile, fish through a vendor config dir; fish 4 marks prompts on its own.
 
 use std::collections::HashMap;
 use std::fs;
@@ -9,24 +9,32 @@ use std::sync::OnceLock;
 
 use vif_config::Config;
 
-const FILES: [(&str, &str); 3] = [
+const FILES: [(&str, &str); 4] = [
     ("zsh/.zshenv", include_str!("../../../assets/shell/zshenv")),
     ("zsh/vif.zsh", include_str!("../../../assets/shell/vif.zsh")),
     ("vif.bash", include_str!("../../../assets/shell/vif.bash")),
+    (
+        "xdg/fish/vendor_conf.d/vif.fish",
+        include_str!("../../../assets/shell/vif.fish"),
+    ),
 ];
 
 /// The shell for a new pane and its arguments, with `env` set up so it loads the integration
-/// where it can; None leaves the choice to the user's login shell.
+/// where it can; None leaves the choice to the user's login shell. A `VIF_GREET` already in
+/// `env` asks for the greeting, and goes if this shell can't play it.
 pub fn prepare(config: &Config, env: &mut HashMap<String, String>) -> Option<(String, Vec<String>)> {
     let term = &config.terminal;
     let configured = term.shell.clone().map(|program| (program, term.args.clone()));
-    if !term.shell_integration {
-        return configured;
-    }
-    let program = term.shell.clone().or_else(|| std::env::var("SHELL").ok())?;
-    let Some(dir) = scripts() else {
+    let greet = env.contains_key("VIF_GREET");
+    let program = term.shell.clone().or_else(|| std::env::var("SHELL").ok());
+    let dir = (term.shell_integration || greet).then(scripts).flatten();
+    let (Some(program), Some(dir)) = (program, dir) else {
+        env.remove("VIF_GREET");
         return configured;
     };
+    if term.shell_integration {
+        env.insert("VIF_MARKS".to_owned(), "1".to_owned());
+    }
     match program.rsplit('/').next() {
         Some("zsh") => {
             if let Ok(own) = std::env::var("ZDOTDIR") {
@@ -41,7 +49,18 @@ pub fn prepare(config: &Config, env: &mut HashMap<String, String>) -> Option<(St
             let rc = dir.join("vif.bash").display().to_string();
             Some((program, vec!["--rcfile".to_owned(), rc]))
         }
-        _ => configured,
+        Some("fish") if greet => {
+            let xdg = dir.join("xdg").display().to_string();
+            let own = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".to_owned());
+            env.insert("XDG_DATA_DIRS".to_owned(), format!("{xdg}:{own}"));
+            env.insert("VIF_FISH_DIR".to_owned(), xdg);
+            configured
+        }
+        _ => {
+            env.remove("VIF_GREET");
+            env.remove("VIF_MARKS");
+            configured
+        }
     }
 }
 
