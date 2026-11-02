@@ -1,0 +1,14 @@
+name = "Day"
+author = "vif"
+extends = "night"
+
+[colors]
+foreground = "#24262c"
+background = "#f7f6f3"
+cursor = "#2f6fb5"
+selection = "#cfe0f3"
+accent = "#2f6fb5"
+palette = [
+    "#24262c", "#c8412f", "#23845a", "#9a6400", "#2f6fb5", "#8a3fd1", "#167c8c", "#d8d6d0",
+    "#6e717b", "#e0523f", "#2c9c6b", "#b47a00", "#3d82cc", "#9c52e3", "#1b93a6", "#ffffff",
+]

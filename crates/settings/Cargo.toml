@@ -1,0 +1,13 @@
+[package]
+name = "vif-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vif-config.workspace = true
+vif-render.workspace = true
+iced.workspace = true
+wgpu.workspace = true
+fontdb.workspace = true
+open.workspace = true

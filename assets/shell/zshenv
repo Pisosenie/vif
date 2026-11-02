@@ -1,0 +1,15 @@
+# vif points ZDOTDIR here to load its shell integration: put it back and start as usual.
+if [[ -n "${VIF_ZDOTDIR+X}" ]]; then
+    builtin export ZDOTDIR="$VIF_ZDOTDIR"
+    builtin unset VIF_ZDOTDIR
+else
+    builtin unset ZDOTDIR
+fi
+{
+    [[ -r "${ZDOTDIR:-$HOME}/.zshenv" ]] && builtin source -- "${ZDOTDIR:-$HOME}/.zshenv"
+} always {
+    if [[ -o interactive && -n "${VIF_SHELL_INTEGRATION-}" ]]; then
+        builtin source -- "$VIF_SHELL_INTEGRATION/zsh/vif.zsh"
+    fi
+    builtin unset VIF_SHELL_INTEGRATION
+}

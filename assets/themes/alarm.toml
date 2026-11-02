@@ -1,0 +1,11 @@
+# For rules: a pane ssh'd into production turns this red, so it never passes for your laptop.
+name = "Alarm"
+author = "vif"
+extends = "night"
+
+[colors]
+foreground = "#f3e3e3"
+background = "#1c0b0c"
+cursor = "#ff5a5f"
+selection = "#5a2226"
+accent = "#ff5a5f"

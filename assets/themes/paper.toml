@@ -1,0 +1,29 @@
+name = "Paper"
+author = "vif"
+extends = "night"
+
+[colors]
+foreground = "#2b2a27"
+background = "#f4efe4"
+cursor = "#c2410c"
+selection = "#e3d9c3"
+accent = "#c2410c"
+palette = [
+    "#2b2a27", "#b42318", "#2f7d32", "#a15c07", "#1d5fa8", "#8e3fa8", "#167178", "#d9d2c3",
+    "#7a7468", "#d03b2c", "#3c9442", "#c27511", "#2f73c2", "#a653c2", "#1f8a92", "#fffdf8",
+]
+
+[window]
+padding = [16, 12]
+radius = 3
+
+[cursor]
+shape = "beam"
+
+[tabs]
+style = "underline"
+title = "{index} {dir}"
+
+[panes]
+divider = "gap"
+dim = 0.15

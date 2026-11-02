@@ -1,0 +1,49 @@
+# A vif theme is the whole look in one file: colors, window, cursor, tabs, panes, badges and
+# hints. `vif theme new mine` copies this one to ~/.config/vif/themes/mine.toml and switches to
+# it; every window follows as you save. Whatever vif.toml sets still wins over the theme.
+name = "Night"
+author = "vif"
+# extends = "night"           # start from another theme and write only what differs
+
+[colors]
+foreground = "#e8e6e1"
+background = "#101115"
+cursor = "#86bdf0"
+selection = "#2c3a4a"
+accent = "#86bdf0"            # tabs, hints, search, running commands
+palette = [
+    "#1e2026", "#ff7b6b", "#5dd39e", "#f2b35c", "#86bdf0", "#c084fc", "#7fd6e3", "#d6d5d1",
+    "#686b75", "#ff9e91", "#84e2b8", "#ffcb80", "#a9d1f6", "#d6aafd", "#a6e6ef", "#f4f3f0",
+]
+
+# [font]                      # a theme may bring a font too
+# family = "Geist Mono"
+
+[window]
+padding = [12, 10]
+opacity = 1.0
+blur = 0
+radius = 8                    # corners of tabs, panels and hint labels; 0 for square
+
+[cursor]
+shape = "block"               # "beam", "underline"
+blink = false
+
+[tabs]
+position = "top"              # "bottom"
+style = "pills"               # "underline", "powerline", "plain"
+show = "many"                 # "always", "never": "many" hides the bar with one tab
+title = "{index} {title}"     # also {cwd} and {dir}
+
+[panes]
+divider = "line"              # "gap"
+dim = 0.28                    # how far splits without focus fade, 0 to 0.9
+
+[badges]
+show = "all"                  # "failures", "none"
+ok = "✓"
+failed = "✗"
+running = "●"
+
+[hints]
+alphabet = "asdfghjklqwertyuiopzxcvbnm"

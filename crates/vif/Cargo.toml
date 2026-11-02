@@ -1,0 +1,27 @@
+[package]
+name = "vif"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vif-config.workspace = true
+vif-render.workspace = true
+alacritty_terminal.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+pollster.workspace = true
+notify.workspace = true
+open.workspace = true
+log.workspace = true
+libc = "0.2"
+env_logger.workspace = true
+copypasta = "0.10"
+base64 = "0.22"
+png = "0.18"
+memchr = "2"
+flate2 = "1"
+polling = "3"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

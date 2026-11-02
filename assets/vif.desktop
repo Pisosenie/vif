@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=vif
+GenericName=Terminal
+Comment=A fast terminal, set up in a window or a file
+Exec=vif
+Icon=vif
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;terminal;
+StartupWMClass=vif

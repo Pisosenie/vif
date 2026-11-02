@@ -1,0 +1,32 @@
+name = "Phosphor"
+author = "vif"
+extends = "night"
+
+[colors]
+foreground = "#7dfc9a"
+background = "#050806"
+cursor = "#7dfc9a"
+selection = "#173d22"
+accent = "#7dfc9a"
+palette = [
+    "#0b140d", "#ff6b5e", "#7dfc9a", "#e8f86a", "#57c7ff", "#c18cff", "#5ef0d6", "#b8f5c6",
+    "#2c5236", "#ff8a80", "#a3ffbd", "#f4ff9a", "#8ad6ff", "#d6b3ff", "#93ffe9", "#e6ffe9",
+]
+
+[window]
+radius = 0
+
+[cursor]
+blink = true
+
+[tabs]
+style = "plain"
+title = "[{index}] {title}"
+
+[panes]
+dim = 0.5
+
+[badges]
+ok = "ok"
+failed = "err"
+running = ".."

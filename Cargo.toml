@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+vif-config = { path = "crates/config" }
+vif-render = { path = "crates/render" }
+alacritty_terminal = "0.26"
+wgpu = "27"
+winit = "0.30"
+swash = "0.2"
+fontdb = "0.23"
+etagere = "0.2"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+toml = "1.1"
+toml_edit = "0.25"
+strsim = "0.11"
+notify = "8"
+open = "5"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+iced = { version = "0.14", features = ["tokio"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
