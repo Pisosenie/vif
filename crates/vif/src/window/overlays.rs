@@ -1,5 +1,7 @@
 //! What floats over the panes: find, hints, the config notice and IME text.
 
+use std::time::Instant;
+
 use vif_render::{LineCell, Rect, Scene, Style};
 
 use super::Win;
@@ -132,64 +134,136 @@ impl Win {
         scene.front.push(Rect::fill(outer.x, outer.y, outer.w, outer.h, dim));
         let (cw, ch) = (m.cell_width, m.cell_height);
         let cell = |line: usize, col: usize| (area.x + col as f32 * cw, area.y + line as f32 * ch);
-        let lit = mix(scheme.fg(), scheme.bg(), 0.86);
+        let lit = mix(scheme.fg(), scheme.bg(), 0.84);
         let mut text = Scene::default();
+        let mut chips = Scene::default();
+        let mut keep = Vec::new();
         for t in &targets {
-            let rest: Vec<String> = t.label.chars().skip(typed).map(String::from).collect();
+            let rest: String = t.label.chars().skip(typed).collect();
             for cells in &t.at {
-                for &(line, col, _) in cells {
+                for &(line, col, c) in cells {
                     let (x, y) = cell(line, col);
                     scene.front.push(Rect::fill(x, y, cw, ch, lit));
+                    self.label(&c.to_string(), x, y, scheme.fg(), Style::Regular, &mut text);
+                    keep.push((y - 0.62 * ch, y + ch));
                 }
+                // The label floats over the target's top-left corner, so all of it stays readable.
                 let (l0, c0, _) = cells[0];
                 let (x, y) = cell(l0, c0);
-                let badge = rest.len() as f32 * cw;
-                scene
+                let (w, h) = (rest.chars().count() as f32 * cw + 6.0 * scale, ch);
+                let (cx, cy) = ((x - 6.0 * scale).max(outer.x).round(), (y - 0.62 * ch).round());
+                let mut shadow = [0.0, 0.0, 0.0, 0.35];
+                shadow[3] *= scheme.opacity.max(0.5);
+                chips
                     .front
-                    .push(Rect::fill(x, y, badge, ch, scheme.accent()).rounded(self.radius() * 0.4));
-                let label: Vec<LineCell> = rest
-                    .iter()
-                    .map(|c| LineCell {
-                        text: c,
-                        style: Style::Bold,
-                        color: scheme.bg(),
-                        wide: false,
-                    })
-                    .collect();
-                self.renderer.draw_line(&label, x, y, &mut text);
-                let shown: Vec<(usize, usize, String)> = cells
-                    .iter()
-                    .skip(rest.len())
-                    .map(|&(l, c, ch)| (l, c, ch.to_string()))
-                    .collect();
-                for (l, c, s) in &shown {
-                    let (x, y) = cell(*l, *c);
-                    let one = [LineCell {
-                        text: s,
-                        style: Style::Regular,
-                        color: scheme.fg(),
-                        wide: false,
-                    }];
-                    self.renderer.draw_line(&one, x, y, &mut text);
-                }
+                    .push(Rect::fill(cx + scale, cy + 2.0 * scale, w, h, shadow).rounded(self.radius() * 0.5));
+                chips
+                    .front
+                    .push(Rect::fill(cx, cy, w, h, scheme.accent()).rounded(self.radius() * 0.5));
+                self.label(&rest, cx + 3.0 * scale, cy, scheme.bg(), Style::Bold, &mut chips);
             }
         }
-        let info = match (total, cfg!(target_os = "macos")) {
-            (0, _) => "nothing to pick   esc".to_owned(),
-            (n, true) => format!("{n} on screen   ⇧ copy   ⌥ paste   esc"),
-            (n, false) => format!("{n} on screen   shift copy   alt paste   esc"),
+        scene.over.extend(text.mask);
+        scene.front.extend(chips.front);
+        scene.over.extend(chips.mask);
+        let mac = cfg!(target_os = "macos");
+        let next = targets
+            .first()
+            .map(|t| (t.label.chars().skip(typed).collect::<String>(), t.describe()));
+        let mut items: Vec<(&str, &str)> = Vec::new();
+        if let Some((label, what)) = &next {
+            items.push((label, what));
+        }
+        items.extend([
+            ("letter", "open"),
+            (if mac { "⇧" } else { "Shift" }, "copy"),
+            (if mac { "⌥" } else { "Alt" }, "paste into prompt"),
+            ("Esc", "back"),
+        ]);
+        let note = if total == 0 {
+            "nothing to pick".to_owned()
+        } else {
+            format!("{total} on screen")
         };
-        let pad = 12.0 * scale;
-        let w = ((6.0 + info.chars().count() as f32) * cw + 2.0 * pad).min(area.w);
+        self.draw_footer("Hints", &note, &items, &keep, scene);
+    }
+
+    /// What a modifier-click on the path under the mouse would do.
+    pub(super) fn draw_link_tip(&mut self, scene: &mut Scene) {
+        let Some(super::Link {
+            pane,
+            span: Some((line, start, _)),
+            target: Some(target),
+            ..
+        }) = self.link.clone()
+        else {
+            return;
+        };
+        let Some(area) = self.panes.get(&pane).map(|p| p.area) else {
+            return;
+        };
+        let m = self.renderer.metrics();
+        let scale = self.scale();
+        let (cw, ch) = (m.cell_width, m.cell_height);
+        let mut what = target.describe();
+        if let Some(first) = what.get(..1) {
+            what = first.to_uppercase() + &what[1..];
+        }
+        let keys = if cfg!(target_os = "macos") {
+            "⌘ click"
+        } else {
+            "Ctrl click"
+        };
+        let pad = 10.0 * scale;
+        let w = (what.chars().count() + keys.chars().count() + 2) as f32 * cw + 2.0 * pad;
         let h = ch + 12.0 * scale;
-        let (x, y) = ((area.x + area.w - w).round(), (area.y + area.h - h).round());
-        scene
-            .front
-            .push(Rect::fill(x, y, w, h, mix(scheme.fg(), scheme.bg(), 0.88)).rounded(self.radius()));
+        let x = (area.x + start as f32 * cw).min(area.x + area.w - w).max(area.x);
+        let above = area.y + line as f32 * ch - h - 4.0 * scale;
+        let y = if above >= area.y {
+            above
+        } else {
+            area.y + (line + 1) as f32 * ch + 4.0 * scale
+        };
+        let fill = mix(self.scheme.fg(), self.scheme.bg(), 0.88);
+        scene.front.push(Rect::fill(x, y, w, h, fill).rounded(self.radius()));
+        let mut text = Scene::default();
         let ty = (y + (h - ch) / 2.0).round();
-        self.label("Hints", x + pad, ty, scheme.accent(), Style::Bold, &mut text);
-        let muted = mix(scheme.fg(), scheme.bg(), 0.4);
-        self.label(&info, x + pad + 6.0 * cw, ty, muted, Style::Regular, &mut text);
+        let tw = self.label(&what, x + pad, ty, self.scheme.fg(), Style::Regular, &mut text);
+        let muted = mix(self.scheme.fg(), self.scheme.bg(), 0.45);
+        self.label(keys, x + pad + tw + 2.0 * cw, ty, muted, Style::Regular, &mut text);
+        scene.over.extend(text.mask);
+    }
+
+    /// Says the config was read again and how long it took, unless it has problems to show.
+    pub fn reloaded(&mut self, took: std::time::Duration) {
+        if self.notice.is_none() {
+            self.flash(&format!("Reloaded vif.toml · {} ms", took.as_millis().max(1)));
+        }
+    }
+
+    /// Something just done, said for a moment.
+    pub(super) fn flash(&mut self, what: &str) {
+        self.toast = Some((what.to_owned(), Instant::now() + std::time::Duration::from_millis(1400)));
+        self.window.request_redraw();
+    }
+
+    pub(super) fn draw_toast(&mut self, scene: &mut Scene) {
+        let Some((what, _)) = self.toast.clone() else {
+            return;
+        };
+        let m = self.renderer.metrics();
+        let scale = self.scale();
+        let (w, h) = self.size();
+        let pad = 14.0 * scale;
+        let tw = what.chars().count() as f32 * m.cell_width + 2.0 * pad;
+        let th = m.cell_height + 14.0 * scale;
+        let lifted = if self.block.is_some() { 56.0 } else { 16.0 } * scale;
+        let (x, y) = (((w - tw) / 2.0).round(), (h - th - lifted).round());
+        let fill = mix(self.scheme.fg(), self.scheme.bg(), 0.86);
+        scene.front.push(Rect::fill(x, y, tw, th, fill).rounded(self.radius()));
+        let mut text = Scene::default();
+        let ty = (y + (th - m.cell_height) / 2.0).round();
+        self.label(&what, x + pad, ty, self.scheme.fg(), Style::Regular, &mut text);
         scene.over.extend(text.mask);
     }
 

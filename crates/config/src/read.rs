@@ -4,25 +4,56 @@ use toml::Spanned;
 use toml::de::{DeString, DeTable, DeValue};
 
 use crate::{
-    ACTIONS, BadgeShow, Config, CursorShape, Decorations, Diagnostic, Divider, OptionAsAlt, Osc52, Rgb, TabPosition,
-    TabShow, TabStyle, themes,
+    ACTIONS, BadgeShow, Config, CursorShape, Decorations, Diagnostic, Divider, Fit, OptionAsAlt, Osc52, Rgb,
+    TabPosition, TabShow, TabStyle, themes,
 };
 
 type Key<'i> = Spanned<DeString<'i>>;
 type Value<'i> = Spanned<DeValue<'i>>;
 
-const SECTIONS: [&str; 10] = [
-    "font", "colors", "window", "cursor", "terminal", "keys", "tabs", "panes", "badges", "hints",
+const SECTIONS: [&str; 12] = [
+    "font",
+    "colors",
+    "window",
+    "cursor",
+    "terminal",
+    "keys",
+    "tabs",
+    "panes",
+    "badges",
+    "hints",
+    "background",
+    "quick",
+];
+const QUICK: [&str; 3] = ["key", "height", "hide_on_blur"];
+const BACKGROUND: [&str; 4] = ["image", "fit", "dim", "blur"];
+const FITS: [(&str, Fit); 5] = [
+    ("cover", Fit::Cover),
+    ("contain", Fit::Contain),
+    ("stretch", Fit::Stretch),
+    ("center", Fit::Center),
+    ("tile", Fit::Tile),
 ];
 const TOP: [&str; 2] = ["theme", "rules"];
 const RULE: [&str; 6] = ["host", "dir", "theme", "accent", "background", "label"];
 const THEME_TOP: [&str; 3] = ["name", "author", "extends"];
-const TABS: [&str; 4] = ["position", "style", "show", "title"];
+const TABS: [&str; 6] = ["position", "style", "show", "title", "detail", "plus"];
 const PANES: [&str; 2] = ["divider", "dim"];
-const BADGES: [&str; 4] = ["show", "ok", "failed", "running"];
+const BADGES: [&str; 5] = ["show", "ok", "failed", "running", "clock"];
 const HINTS: [&str; 1] = ["alphabet"];
-const FONT: [&str; 4] = ["family", "size", "line_height", "ligatures"];
-const COLORS: [&str; 7] = [
+const FONT: [&str; 9] = [
+    "family",
+    "size",
+    "line_height",
+    "ligatures",
+    "weight",
+    "bold_weight",
+    "bold_family",
+    "italic_family",
+    "features",
+];
+const COLORS: [&str; 8] = [
+    "from",
     "apolline",
     "foreground",
     "background",
@@ -31,7 +62,8 @@ const COLORS: [&str; 7] = [
     "accent",
     "palette",
 ];
-const WINDOW: [&str; 7] = [
+const WINDOW: [&str; 8] = [
+    "shader",
     "padding",
     "opacity",
     "blur",
@@ -40,7 +72,7 @@ const WINDOW: [&str; 7] = [
     "decorations",
     "radius",
 ];
-const CURSOR: [&str; 2] = ["shape", "blink"];
+const CURSOR: [&str; 3] = ["shape", "blink", "trail"];
 const TERMINAL: [&str; 11] = [
     "shell",
     "args",
@@ -95,6 +127,28 @@ const OPTION_AS_ALT: [(&str, OptionAsAlt); 4] = [
     ("right", OptionAsAlt::Right),
     ("both", OptionAsAlt::Both),
 ];
+
+/// Every key vif.toml knows, as `section.key`, and the top-level ones bare.
+pub fn known() -> Vec<String> {
+    let sections: [(&str, &[&str]); 11] = [
+        ("font", &FONT),
+        ("colors", &COLORS),
+        ("window", &WINDOW),
+        ("cursor", &CURSOR),
+        ("terminal", &TERMINAL),
+        ("tabs", &TABS),
+        ("panes", &PANES),
+        ("badges", &BADGES),
+        ("hints", &HINTS),
+        ("background", &BACKGROUND),
+        ("quick", &QUICK),
+    ];
+    let mut out: Vec<String> = TOP.iter().map(|k| (*k).to_owned()).collect();
+    for (section, keys) in sections {
+        out.extend(keys.iter().map(|k| format!("{section}.{k}")));
+    }
+    out
+}
 
 /// vif.toml over its theme over the defaults.
 pub(crate) fn document(src: &str) -> (Config, Vec<Diagnostic>) {
@@ -171,6 +225,8 @@ impl Reader<'_> {
                 "panes" => self.panes(section, config),
                 "badges" => self.badges(section, config),
                 "hints" => self.hints(section, config),
+                "background" => self.background(section, config),
+                "quick" => self.quick(section, config),
                 _ => self.keys(section, config),
             }
         }
@@ -231,6 +287,40 @@ impl Reader<'_> {
                         font.ligatures = v;
                     }
                 }
+                "weight" | "bold_weight" => {
+                    if let Some(v) = self.integer(key, value, 100..=900) {
+                        let slot = if key.get_ref() == "weight" {
+                            &mut font.weight
+                        } else {
+                            &mut font.bold_weight
+                        };
+                        *slot = v as u16;
+                    }
+                }
+                "bold_family" | "italic_family" => {
+                    if let Some(v) = self.string(key, value) {
+                        let v = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+                        if key.get_ref() == "bold_family" {
+                            font.bold_family = v;
+                        } else {
+                            font.italic_family = v;
+                        }
+                    }
+                }
+                "features" => {
+                    if let Some(list) = self.strings(key, value) {
+                        match list.iter().find(|f| crate::feature(f).is_none()) {
+                            Some(bad) => {
+                                let message = format!(
+                                    "“{bad}” isn't a feature; they look like \"ss01\", \"-calt\" or \"cv02=3\""
+                                );
+                                let d = Diagnostic::new(self.line(value.span()), message).at(value.span());
+                                self.diagnostics.push(d);
+                            }
+                            None => font.features = list,
+                        }
+                    }
+                }
                 _ => self.unknown(key, "font setting", &FONT),
             }
         }
@@ -250,6 +340,25 @@ impl Reader<'_> {
                         colors.apolline = v;
                     }
                 }
+                "from" => {
+                    let Some(from) = self.string(key, value) else {
+                        continue;
+                    };
+                    let path = crate::scheme_path(from);
+                    let scheme = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|t| crate::import::read(&t));
+                    match &scheme {
+                        Some(scheme) => colors.base = scheme.over(colors.base),
+                        None => {
+                            let message = format!("no color scheme in {}; the colors stay as they are", path.display());
+                            let d = Diagnostic::new(self.line(value.span()), message).at(value.span());
+                            self.diagnostics.push(d);
+                        }
+                    }
+                    colors.from = Some(from.to_owned());
+                    colors.scheme = scheme;
+                }
                 "palette" => {
                     if let Some(list) = self.palette(key, value) {
                         colors.palette = list;
@@ -260,10 +369,64 @@ impl Reader<'_> {
         }
     }
 
+    fn quick(&mut self, table: &DeTable, config: &mut Config) {
+        let quick = &mut config.quick;
+        for (key, value) in table.iter() {
+            match key.get_ref().as_ref() {
+                "key" => {
+                    if let Some(v) = self.string(key, value) {
+                        quick.key = crate::normalize_combo(v);
+                    }
+                }
+                "height" => quick.height = self.float(key, value, 0.15..=1.0).unwrap_or(quick.height),
+                "hide_on_blur" => quick.hide_on_blur = self.boolean(key, value).unwrap_or(quick.hide_on_blur),
+                _ => self.unknown(key, "quick setting", &QUICK),
+            }
+        }
+    }
+
+    fn background(&mut self, table: &DeTable, config: &mut Config) {
+        let background = &mut config.background;
+        for (key, value) in table.iter() {
+            match key.get_ref().as_ref() {
+                "image" => {
+                    if let Some(v) = self.string(key, value) {
+                        background.image = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+                    }
+                }
+                "fit" => {
+                    if let Some(v) = self.choice(key, value, &FITS) {
+                        background.fit = v;
+                    }
+                }
+                "dim" => {
+                    if let Some(v) = self.float(key, value, 0.0..=1.0) {
+                        background.dim = v;
+                    }
+                }
+                "blur" => {
+                    if let Some(v) = self.integer(key, value, 0..=64) {
+                        background.blur = v as u8;
+                    }
+                }
+                _ => self.unknown(key, "background setting", &BACKGROUND),
+            }
+        }
+    }
+
     fn window(&mut self, table: &DeTable, config: &mut Config) {
         let window = &mut config.window;
         for (key, value) in table.iter() {
             match key.get_ref().as_ref() {
+                "shader" => {
+                    let list = match value.get_ref().as_str() {
+                        Some(one) => Some(vec![one.to_owned()]),
+                        None => self.strings(key, value),
+                    };
+                    if let Some(list) = list {
+                        window.shaders = list.into_iter().filter(|s| !s.trim().is_empty()).collect();
+                    }
+                }
                 "padding" => {
                     if let Some(v) = self.padding(key, value) {
                         window.padding = v;
@@ -315,6 +478,11 @@ impl Reader<'_> {
                 "blink" => {
                     if let Some(v) = self.boolean(key, value) {
                         config.cursor.blink = v;
+                    }
+                }
+                "trail" => {
+                    if let Some(v) = self.boolean(key, value) {
+                        config.cursor.trail = v;
                     }
                 }
                 _ => self.unknown(key, "cursor setting", &CURSOR),
@@ -398,6 +566,8 @@ impl Reader<'_> {
                         tabs.title = v.to_owned();
                     }
                 }
+                "detail" => tabs.detail = self.boolean(key, value).unwrap_or(tabs.detail),
+                "plus" => tabs.plus = self.boolean(key, value).unwrap_or(tabs.plus),
                 _ => self.unknown(key, "tabs setting", &TABS),
             }
         }
@@ -420,6 +590,10 @@ impl Reader<'_> {
             let slot = match key.get_ref().as_ref() {
                 "show" => {
                     badges.show = self.choice(key, value, &BADGE_SHOWS).unwrap_or(badges.show);
+                    continue;
+                }
+                "clock" => {
+                    badges.clock = self.boolean(key, value).unwrap_or(badges.clock);
                     continue;
                 }
                 "ok" => &mut badges.ok,
@@ -783,6 +957,28 @@ mod tests {
         assert_eq!(config.cursor.shape, CursorShape::Block);
         let fixed = diagnostics[0].fix.as_ref().unwrap().apply(src).unwrap();
         assert_eq!(fixed, "[cursor]\nshape = \"beam\"\n");
+    }
+
+    #[test]
+    fn colors_follow_a_scheme_file() {
+        let path = std::env::temp_dir().join(format!("vif-wal-{}.json", std::process::id()));
+        let colors: Vec<String> = (0..16).map(|i| format!("\"color{i}\": \"#0000{i:02x}\"")).collect();
+        let wal = format!(
+            r##"{{"special": {{"background": "#101010", "foreground": "#eeeeee"}}, "colors": {{{}}}}}"##,
+            colors.join(", ")
+        );
+        std::fs::write(&path, wal).unwrap();
+        let src = format!("[colors]\nfrom = \"{}\"\nforeground = \"#ff0000\"\n", path.display());
+        let (config, diagnostics) = Config::parse(&src);
+        let _ = std::fs::remove_file(&path);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let palette = config.palette();
+        assert_eq!(palette.background, crate::Rgb::hex(0x101010));
+        assert_eq!(palette.foreground, crate::Rgb::hex(0xff0000));
+        assert_eq!(palette.ansi[12], crate::Rgb::hex(0x00000c));
+        assert_eq!(palette.accent, crate::Rgb::hex(0x000004));
+        let (_, missing) = Config::parse("[colors]\nfrom = \"/nowhere/colors.json\"\n");
+        assert_eq!(missing.len(), 1);
     }
 
     #[test]

@@ -23,6 +23,7 @@ use winit::window::WindowId;
 
 use crate::app::UserEvent;
 use crate::colors::{Rgba, Scheme, mix};
+use crate::fold::{Shown, folded_row};
 use crate::graphics;
 use crate::hints::{self, Hints};
 use crate::layout::{Area, PaneId};
@@ -180,6 +181,14 @@ pub struct Pane {
     control: Option<std::os::unix::net::UnixStream>,
     /// Until when finished commands are a session's replay, not news.
     quiet: Option<Instant>,
+    /// The session the shell lives in.
+    pub session: Option<String>,
+    /// Blocks whose output shows as one line.
+    pub(crate) folds: std::collections::HashSet<u32>,
+    /// What each screen line showed last frame, while a fold is on screen.
+    pub(crate) view: Option<Vec<Shown>>,
+    /// The name its session was given.
+    pub name: Option<String>,
 }
 
 pub fn term_config(config: &Config) -> term::Config {
@@ -234,7 +243,7 @@ impl Pane {
         share_size(&graphics, cols, m);
         let blocks = Arc::new(Blocks::default());
         let link = match &spawn.attach {
-            Some(session) => Some(Link::attach(session)),
+            Some(session) => Some(Ok(session.clone())),
             None if spawn.config.terminal.sessions && spawn.command.is_none() => {
                 let spec = session::Spec {
                     program: program.as_ref().map(|(p, _)| p.clone()),
@@ -243,15 +252,16 @@ impl Pane {
                     env: env.clone(),
                     size: (size.num_cols, size.num_lines, size.cell_width, size.cell_height),
                 };
-                Some(session::start(&spec).and_then(|session| Link::attach(&session)))
+                Some(session::start(&spec))
             }
             None => None,
-        };
-        let (pty, shell, file, control) = match link {
-            Some(Ok(link)) => {
+        }
+        .map(|session| session.and_then(|id| Link::attach(&id).map(|link| (id, link))));
+        let (pty, shell, file, control, session) = match link {
+            Some(Ok((session, link))) => {
                 let (shell, file, control) = (link.pid, Tty::Path(link.tty.clone()), link.control().ok());
                 let pty = graphics::GraphicsPty::session(link, graphics.clone(), blocks.clone())?;
-                (pty, shell, file, control)
+                (pty, shell, file, control, Some(session))
             }
             other => {
                 if let Some(Err(err)) = other {
@@ -266,7 +276,7 @@ impl Pane {
                 let pty = tty::new(&options, size, id)?;
                 let (shell, file) = (pty.child().id(), Tty::Own(pty.file().try_clone().ok()));
                 let pty = graphics::GraphicsPty::new(pty, graphics.clone(), blocks.clone())?;
-                (pty, shell, file, None)
+                (pty, shell, file, None, None)
             }
         };
         let event_loop = EventLoop::new(term.clone(), proxy, pty, true, false)?;
@@ -275,6 +285,7 @@ impl Pane {
         if control.is_some() {
             let _ = sender.send(Msg::Resize(size));
         }
+        let name = session.as_deref().and_then(session::name);
         let quiet = spawn
             .attach
             .as_ref()
@@ -304,7 +315,21 @@ impl Pane {
             rule: None,
             control,
             quiet,
+            session,
+            folds: std::collections::HashSet::new(),
+            view: None,
+            name,
         })
+    }
+
+    pub fn toggle_fold(&mut self, id: u32) {
+        if !self.folds.remove(&id) {
+            self.folds.insert(id);
+        }
+    }
+
+    pub fn folded(&self, id: u32) -> bool {
+        self.folds.contains(&id)
     }
 
     pub fn cwd(&self) -> Option<PathBuf> {
@@ -409,7 +434,11 @@ impl Pane {
 
     fn point(&self, term: &Term<Proxy>, col: usize, line: usize) -> Point {
         let offset = term.grid().display_offset() as i32;
-        Point::new(Line(line as i32 - offset), Column(col))
+        let grid_line = match self.shown(offset, line) {
+            Shown::Line(l) => l,
+            _ => line as i32 - offset,
+        };
+        Point::new(Line(grid_line), Column(col))
     }
 
     pub fn select(&mut self, col: usize, line: usize, side: Side, clicks: u8, block: bool) {
@@ -437,27 +466,6 @@ impl Pane {
         let text = self.term.lock().selection_to_string()?;
         let text: String = text.chars().filter(|c| !marks::is_tag(*c)).collect();
         (!text.is_empty()).then_some(text)
-    }
-
-    /// Scrolls the previous (or next) prompt to the top.
-    pub fn jump_prompt(&mut self, older: bool) {
-        let mut term = self.term.lock();
-        let grid = term.grid();
-        let offset = grid.display_offset() as i32;
-        let top = -offset;
-        let (first, last) = (-(grid.history_size() as i32), grid.screen_lines() as i32 - 1);
-        let prompt = |l: i32| row_has(grid, l, |z| marks::find(z, Kind::Prompt).is_some());
-        let target = if older {
-            (first..top).rev().find(|&l| prompt(l))
-        } else {
-            (top + 1..=last).find(|&l| prompt(l))
-        };
-        let scroll = match target {
-            Some(line) => Scroll::Delta((-line).max(0) - offset),
-            None if !older => Scroll::Bottom,
-            None => return,
-        };
-        term.scroll_display(scroll);
     }
 
     /// What the newest command printed, selected so it shows what was taken.
@@ -590,18 +598,47 @@ impl Pane {
     pub fn url_at(&self, col: usize, line: usize) -> Option<(usize, usize, String)> {
         let term = self.term.lock();
         let offset = term.grid().display_offset() as i32;
-        let row = &term.grid()[Line(line as i32 - offset)];
+        let Shown::Line(grid_line) = self.shown(offset, line) else {
+            return None;
+        };
+        let row = &term.grid()[Line(grid_line)];
         let chars: Vec<char> = (0..self.cols.min(row.len())).map(|c| row[Column(c)].c).collect();
         drop(term);
         find_url(&chars, col)
+    }
+
+    /// A path like `src/main.rs:12` under a cell, if it names something that exists: its first and
+    /// last column and what it is.
+    pub fn path_at(&self, col: usize, line: usize) -> Option<(usize, usize, hints::Target)> {
+        let term = self.term.lock();
+        let offset = term.grid().display_offset() as i32;
+        let Shown::Line(grid_line) = self.shown(offset, line) else {
+            return None;
+        };
+        let row = &term.grid()[Line(grid_line)];
+        let text: Vec<char> = (0..self.cols.min(row.len())).map(|c| row[Column(c)].c).collect();
+        drop(term);
+        let cols = (0..text.len()).collect();
+        let rows = [hints::Row {
+            text,
+            cols,
+            wraps: false,
+        }];
+        let cwd = self.last_location().and_then(|p| p.cwd);
+        hints::scan(&rows, &[], cwd.as_deref()).into_iter().find_map(|t| {
+            let cells = t.at.first()?;
+            let (start, end) = (cells.first()?.1, cells.last()?.1);
+            let path = matches!(t.kind, hints::Kind::Path { .. });
+            (path && (start..=end).contains(&col)).then_some((start, end, t))
+        })
     }
 
     /// The cursor's cell inside the pane, for the IME popup.
     pub fn cursor_cell(&self) -> Option<(usize, usize)> {
         let term = self.term.lock();
         let content = term.renderable_content();
-        let line = content.cursor.point.line.0 + content.display_offset as i32;
-        (line >= 0 && (line as usize) < self.lines).then_some((content.cursor.point.column.0, line as usize))
+        let line = self.screen_of(content.display_offset as i32, content.cursor.point.line.0)?;
+        Some((content.cursor.point.column.0, line))
     }
 
     /// Draws each image whole, anchored at its topmost visible cell: text may reflow around
@@ -711,12 +748,18 @@ impl Pane {
             }
         }
         term.reset_damage();
+        // Folds move lines around the screen, so every row is drawn again while one shows.
+        let view = self.fold_view(&term);
+        if view.is_some() || self.view.is_some() {
+            self.rows.iter_mut().for_each(|row| *row = None);
+        }
+        self.view = view;
 
         let content = term.renderable_content();
         let offset = content.display_offset as i32;
-        let cursor_line = content.cursor.point.line.0 + offset;
-        let cursor = (cursor_line >= 0 && (cursor_line as usize) < self.lines)
-            .then_some((content.cursor.point.column.0, cursor_line as usize))
+        let cursor = self
+            .screen_of(offset, content.cursor.point.line.0)
+            .map(|line| (content.cursor.point.column.0, line))
             .filter(|_| content.cursor.shape != CursorShape::Hidden);
         let shape = if look.focused {
             content.cursor.shape
@@ -736,15 +779,22 @@ impl Pane {
 
         // Copy what changed and let the PTY thread go before shaping and rasterizing.
         let cols = self.cols;
-        let dirty: Vec<(usize, Vec<Cell>)> = (0..self.lines)
+        let dirty: Vec<(usize, Shown, Vec<Cell>)> = (0..self.lines)
             .filter(|&line| self.rows[line].is_none())
             .map(|line| {
-                let row = &term.grid()[Line(line as i32 - offset)];
-                (line, (0..cols.min(row.len())).map(|c| row[Column(c)].clone()).collect())
+                let shown = self.shown(offset, line);
+                let cells = match shown {
+                    Shown::Line(grid_line) => {
+                        let row = &term.grid()[Line(grid_line)];
+                        (0..cols.min(row.len())).map(|c| row[Column(c)].clone()).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                (line, shown, cells)
             })
             .collect();
-        let wide_cursor = cursor.is_some_and(|(col, line)| {
-            term.grid()[Line(line as i32 - offset)][Column(col)]
+        let wide_cursor = cursor.is_some_and(|(col, _)| {
+            term.grid()[content.cursor.point.line][Column(col)]
                 .flags
                 .contains(Flags::WIDE_CHAR)
         });
@@ -758,9 +808,18 @@ impl Pane {
 
         let (x0, y0) = (self.area.x, self.area.y);
         let o = self.outer;
-        for (line, cells) in dirty {
+        for (line, shown, cells) in dirty {
             let invert = solid.filter(|c| c.1 == line).map(|c| c.0);
             let y = y0 + line as f32 * m.cell_height;
+            if let Shown::Folded { lines, .. } = shown {
+                self.rows[line] = Some(Row {
+                    scene: folded_row(r, look, lines, x0, y),
+                    marks: Vec::new(),
+                    block: None,
+                    end: 0,
+                });
+                continue;
+            }
             let bleed = Bleed {
                 left: o.x,
                 right: o.x + o.w,
@@ -779,7 +838,9 @@ impl Pane {
             let color = rgba_alpha(look.scheme.palette.selection, 1.0);
             let last = self.cols.saturating_sub(1);
             for line in 0..self.lines {
-                let grid_line = line as i32 - offset;
+                let Shown::Line(grid_line) = self.shown(offset, line) else {
+                    continue;
+                };
                 if grid_line < range.start.line.0 || grid_line > range.end.line.0 {
                     continue;
                 }
@@ -845,7 +906,7 @@ fn rgba_alpha(c: vif_config::Rgb, a: f32) -> Rgba {
 }
 
 /// From a block's output mark to the line before the next prompt, or to the cursor.
-fn output_lines(term: &Term<Proxy>, id: u32) -> Option<(i32, i32)> {
+pub(crate) fn output_lines(term: &Term<Proxy>, id: u32) -> Option<(i32, i32)> {
     let grid = term.grid();
     let (first, last) = (-(grid.history_size() as i32), grid.screen_lines() as i32 - 1);
     let start = (first..=last)
@@ -857,21 +918,22 @@ fn output_lines(term: &Term<Proxy>, id: u32) -> Option<(i32, i32)> {
     Some((start, end.max(start)))
 }
 
-fn clean(text: &str) -> Option<String> {
+pub(crate) fn clean(text: &str) -> Option<String> {
     let text: String = text.chars().filter(|c| !marks::is_tag(*c)).collect();
     let text = text.trim_end();
     (!text.is_empty()).then(|| text.to_owned())
 }
 
-fn row_has(grid: &Grid<Cell>, line: i32, test: impl Fn(&[char]) -> bool) -> bool {
+pub(crate) fn row_has(grid: &Grid<Cell>, line: i32, test: impl Fn(&[char]) -> bool) -> bool {
     let row = &grid[Line(line)];
     (0..row.len()).any(|c| row[Column(c)].zerowidth().is_some_and(&test))
 }
 
-/// Failures, and with `show = "all"` anything that took a second or more.
+/// `✓ 41.2s · 16:39`, `✗ exit 101 · 3.1s · 16:40`, `● running · 1:12`; with `show = "failures"`
+/// only the failures.
 fn badge(block: &marks::Block, scheme: &Scheme, style: &Badges) -> Option<(String, Rgba)> {
     let took = block.running();
-    let long = took >= Duration::from_secs(1) && style.show == BadgeShow::All;
+    let all = style.show == BadgeShow::All;
     let mark = |glyph: &str, rest: String| {
         if glyph.is_empty() {
             rest
@@ -879,16 +941,25 @@ fn badge(block: &marks::Block, scheme: &Scheme, style: &Badges) -> Option<(Strin
             format!("{glyph} {rest}")
         }
     };
+    let ended = |text: String| {
+        if style.clock {
+            format!("{text} · {}", marks::time_of_day(block.finished_at()))
+        } else {
+            text
+        }
+    };
     match block.ended {
         _ if style.show == BadgeShow::None => None,
-        None => long.then(|| (mark(&style.running, marks::clock(took)), scheme.accent())),
-        Some((_, 0)) => long.then(|| (mark(&style.ok, marks::clock(took)), mix(scheme.fg(), scheme.bg(), 0.5))),
+        None => all.then(|| {
+            let text = format!("running · {}", marks::clock(took));
+            (mark(&style.running, text), scheme.accent())
+        }),
+        Some((_, 0)) => all.then(|| {
+            let text = ended(marks::clock(took));
+            (mark(&style.ok, text), mix(scheme.fg(), scheme.bg(), 0.5))
+        }),
         Some((_, code)) => {
-            let text = if long {
-                format!("{code} · {}", marks::clock(took))
-            } else {
-                code.to_string()
-            };
+            let text = ended(format!("exit {code} · {}", marks::clock(took)));
             Some((mark(&style.failed, text), rgba_alpha(scheme.palette.ansi[1], 1.0)))
         }
     }

@@ -1,15 +1,15 @@
 use iced::widget::shader::{self, Pipeline, Primitive, Viewport};
 use iced::{Rectangle, mouse};
 use vif_config::{BadgeShow, Badges, Config, CursorShape, Palette, Rgb, TabPosition, TabShow, TabStyle, Tabs};
-use vif_render::chrome::{self, Bar, BarStyle};
+use vif_render::chrome::{self, Bar, BarStyle, Tab};
 use vif_render::{FontConfig, LineCell, RECT_CURL, Rect, Renderer, Scene, Style};
 
 const BAR: f32 = 34.0;
 /// What the preview's three tabs stand for: title, folder.
-const TABS: [(&str, &str); 3] = [
-    ("zsh", "~/src/vif"),
-    ("nvim", "~/work/reporting-agent"),
-    ("ssh devbox", "~"),
+const TABS: [(&str, &str, Option<&str>); 3] = [
+    ("zsh", "~/src/vif", None),
+    ("pytest", "~/work/reporting-agent", Some("uv run pytest")),
+    ("ssh devbox", "devbox", Some("ssh")),
 ];
 
 /// The settings window's preview: the terminal's own renderer drawing a sample session.
@@ -41,6 +41,13 @@ impl Preview {
                 line_height: config.font.line_height,
                 ligatures: config.font.ligatures,
                 scale: 1.0,
+                faces: vif_render::Faces {
+                    weight: config.font.weight,
+                    bold_weight: config.font.bold_weight,
+                    bold_family: config.font.bold_family.clone(),
+                    italic_family: config.font.italic_family.clone(),
+                    features: config.font.feature_settings(),
+                },
             },
             palette,
             padding: config.window.padding,
@@ -125,10 +132,10 @@ impl Primitive for Preview {
         };
         let on_top = self.tabs.position == TabPosition::Top;
         if bar > 0.0 {
-            let titles: Vec<String> = TABS
+            let titles: Vec<Tab> = TABS
                 .iter()
                 .enumerate()
-                .map(|(i, (title, cwd))| {
+                .map(|(i, (title, cwd, running))| {
                     let dir = cwd.rsplit('/').next().unwrap_or(cwd);
                     let text = self
                         .tabs
@@ -137,7 +144,21 @@ impl Primitive for Preview {
                         .replace("{title}", title)
                         .replace("{cwd}", cwd)
                         .replace("{dir}", dir);
-                    text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    let detail = match running {
+                        _ if !self.tabs.detail => "",
+                        Some(running) => running,
+                        None => cwd,
+                    };
+                    let dot = match (running, i) {
+                        (Some(_), _) => color(p.ansi[2]),
+                        (None, 0) => color(p.accent),
+                        _ => color(p.foreground.toward(p.background, 0.7)),
+                    };
+                    Tab {
+                        title: text.split_whitespace().collect::<Vec<_>>().join(" "),
+                        detail: detail.to_owned(),
+                        dot: Some(dot),
+                    }
                 })
                 .collect();
             let tab_h = (bar - 8.0 * scale).max(m.cell_height + 4.0 * scale);
@@ -152,6 +173,7 @@ impl Primitive for Preview {
                 w: w - 16.0 * scale,
                 h: tab_h,
                 tabs: &titles,
+                plus: self.tabs.plus,
                 active: 0,
                 style: match self.tabs.style {
                     TabStyle::Pills => BarStyle::Pills,

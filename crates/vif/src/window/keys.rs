@@ -16,6 +16,14 @@ impl Win {
         if self.history.is_some() {
             return self.history_key(&event, shared);
         }
+        if self.sessions.is_some() {
+            self.sessions_key(&event, shared);
+            return false;
+        }
+        if self.block.is_some() {
+            self.block_key(&event, shared);
+            return false;
+        }
         if let Some(id) = self.tabs.get(self.active).map(|t| t.focus)
             && self.panes.get(&id).is_some_and(|p| p.hints.is_some())
         {
@@ -41,6 +49,7 @@ impl Win {
         let mode = pane.mode();
         if let Some(bytes) = input::encode(&event, self.mods.state(), self.alt_meta(), mode) {
             if event.state == ElementState::Pressed {
+                self.hud_pressed();
                 if !mode.contains(TermMode::REPORT_EVENT_TYPES) {
                     self.window.set_cursor_visible(false);
                 }
@@ -209,14 +218,7 @@ impl Win {
                     _ => self.paste(text),
                 }
             }
-            "prompt_previous" | "prompt_next" => {
-                if let Some(id) = self.tabs.get(self.active).map(|t| t.focus)
-                    && let Some(pane) = self.panes.get_mut(&id)
-                {
-                    pane.jump_prompt(action == "prompt_previous");
-                }
-                self.window.request_redraw();
-            }
+            "prompt_previous" | "prompt_next" => self.block_step(action == "prompt_previous"),
             "copy_output" => {
                 if let Some(id) = self.tabs.get(self.active).map(|t| t.focus)
                     && let Some(text) = self.panes.get_mut(&id).and_then(Pane::last_output)
@@ -324,17 +326,26 @@ impl Win {
             }
             "settings" => open_settings(None),
             "history" => {
-                self.history = match self.history {
-                    Some(_) => None,
-                    None => Some(super::history::History::open()),
-                };
+                if self.history.take().is_none() {
+                    self.open_history();
+                }
                 self.palette = None;
+                self.window.request_redraw();
+            }
+            "hud" => self.toggle_hud(),
+            "quick_terminal" => {
+                let _ = shared.proxy.send_event(crate::app::UserEvent::Quick);
+            }
+            "sessions" => {
+                if self.sessions.take().is_none() {
+                    self.open_sessions();
+                }
                 self.window.request_redraw();
             }
             "palette" => {
                 self.palette = match self.palette {
                     Some(_) => None,
-                    None => Some(super::palette::Palette::default()),
+                    None => Some(super::palette::Palette::open()),
                 };
                 self.window.request_redraw();
             }

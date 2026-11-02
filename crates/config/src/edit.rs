@@ -86,6 +86,56 @@ impl Editor {
         }
     }
 
+    /// A list of text, or no key when it is empty.
+    pub fn set_list(&mut self, section: &str, key: &str, items: &[String]) {
+        if items.is_empty() {
+            return self.remove(section, key);
+        }
+        let list: toml_edit::Array = items.iter().map(String::as_str).collect();
+        self.set(section, key, list);
+    }
+
+    /// Sets one key of the `index`th `[[rules]]`, or removes it when empty.
+    pub fn set_rule(&mut self, index: usize, key: &str, value: &str) {
+        let Some(rule) = self
+            .doc
+            .get_mut("rules")
+            .and_then(Item::as_array_of_tables_mut)
+            .and_then(|rules| rules.get_mut(index))
+        else {
+            return;
+        };
+        if value.trim().is_empty() {
+            rule.remove(key);
+        } else {
+            put(rule, key, value.trim().into());
+        }
+    }
+
+    /// A new `[[rules]]` at the end, matching `host`.
+    pub fn add_rule(&mut self, host: &str) {
+        let root = self.doc.as_table_mut();
+        if !root.get("rules").is_some_and(Item::is_array_of_tables) {
+            root.insert("rules", Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+        }
+        if let Some(rules) = root.get_mut("rules").and_then(Item::as_array_of_tables_mut) {
+            let mut rule = Table::new();
+            rule.insert("host", toml_edit::value(host));
+            rules.push(rule);
+        }
+    }
+
+    pub fn remove_rule(&mut self, index: usize) {
+        if let Some(rules) = self.doc.get_mut("rules").and_then(Item::as_array_of_tables_mut)
+            && index < rules.len()
+        {
+            rules.remove(index);
+            if rules.is_empty() {
+                self.doc.as_table_mut().remove("rules");
+            }
+        }
+    }
+
     pub fn set_path(&mut self, path: &Path) {
         self.path = path.to_owned();
     }
@@ -119,14 +169,14 @@ impl Editor {
     /// The lines of one section with their 1-based numbers, as they are in the file.
     pub fn section(&self, name: &str) -> Vec<(usize, String)> {
         let text = self.text();
-        let header = format!("[{name}]");
+        let headers = [format!("[{name}]"), format!("[[{name}]]")];
         let mut out = Vec::new();
         // An empty name means the lines above the first section, like `theme`.
         let mut inside = name.is_empty();
         for (i, line) in text.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with('[') {
-                inside = !name.is_empty() && trimmed == header;
+                inside = !name.is_empty() && headers.iter().any(|h| h == trimmed);
             }
             if inside {
                 out.push((i + 1, line.to_owned()));
@@ -180,6 +230,21 @@ fn changed(old: &str, new: &str) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_and_lists_edit_in_place() {
+        let mut editor = Editor::parse("[font]\nsize = 13\n").unwrap();
+        editor.add_rule("prod-*");
+        editor.set_rule(0, "label", "PROD");
+        editor.set_list("window", "shader", &["crt".to_owned(), "bloom".to_owned()]);
+        let (config, diagnostics) = crate::Config::parse(&editor.text());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}\n{}", editor.text());
+        assert_eq!(config.rules[0].label.as_deref(), Some("PROD"));
+        assert_eq!(config.window.shaders, ["crt", "bloom"]);
+        editor.set_rule(0, "label", "");
+        editor.remove_rule(0);
+        assert!(!editor.text().contains("rules"));
+    }
 
     #[test]
     fn palette_round_trips() {

@@ -1,5 +1,6 @@
 mod diagnostic;
 mod edit;
+pub mod import;
 mod read;
 mod theme;
 pub mod themes;
@@ -9,9 +10,10 @@ use std::{env, fs, io};
 
 pub use diagnostic::{Diagnostic, Fix, report};
 pub use edit::Editor;
+pub use read::known;
 pub use theme::{Palette, Rgb};
 
-pub const ACTIONS: [&str; 39] = [
+pub const ACTIONS: [&str; 42] = [
     "copy",
     "paste",
     "search",
@@ -20,6 +22,9 @@ pub const ACTIONS: [&str; 39] = [
     "prompt_next",
     "copy_output",
     "palette",
+    "sessions",
+    "hud",
+    "quick_terminal",
     "history",
     "new_window",
     "new_tab",
@@ -68,6 +73,54 @@ pub struct Config {
     pub badges: Badges,
     pub hints: HintKeys,
     pub rules: Vec<Rule>,
+    pub background: Background,
+    pub quick: Quick,
+}
+
+/// The quick terminal, which drops in from the top of the screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Quick {
+    /// The key that shows and hides it from anywhere, on macOS; elsewhere the compositor binds
+    /// `vif quick`.
+    pub key: String,
+    /// How much of the screen's height it takes.
+    pub height: f32,
+    /// Hides when another window takes the focus.
+    pub hide_on_blur: bool,
+}
+
+/// A picture behind the text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Background {
+    /// As written: `~/` is home, a bare name sits by vif.toml.
+    pub image: Option<String>,
+    pub fit: Fit,
+    /// How far the picture fades toward the background color, 0 to 1.
+    pub dim: f32,
+    /// Blur radius in pixels.
+    pub blur: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fit {
+    Cover,
+    Contain,
+    Stretch,
+    Center,
+    Tile,
+}
+
+/// A file named in the config: `~/` is home, an absolute path is itself, anything else sits in
+/// `dir` next to vif.toml.
+pub fn file(name: &str, dir: &str) -> PathBuf {
+    match name.strip_prefix("~/") {
+        Some(rest) => env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(rest),
+        None => path()
+            .parent()
+            .map_or_else(self::dir, PathBuf::from)
+            .join(dir)
+            .join(name),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,6 +129,31 @@ pub struct Font {
     pub size: f32,
     pub line_height: f32,
     pub ligatures: bool,
+    pub weight: u16,
+    pub bold_weight: u16,
+    pub bold_family: Option<String>,
+    pub italic_family: Option<String>,
+    /// OpenType features as written: "ss01", "-calt", "cv02=3".
+    pub features: Vec<String>,
+}
+
+impl Font {
+    /// The features as tags and values: "-calt" is ("calt", 0), "cv02=3" is ("cv02", 3).
+    pub fn feature_settings(&self) -> Vec<(String, u16)> {
+        self.features.iter().filter_map(|f| feature(f)).collect()
+    }
+}
+
+pub(crate) fn feature(text: &str) -> Option<(String, u16)> {
+    let (tag, value) = match text.split_once('=') {
+        Some((tag, value)) => (tag, value.trim().parse().ok()?),
+        None => match text.strip_prefix('-') {
+            Some(tag) => (tag, 0),
+            None => (text.strip_prefix('+').unwrap_or(text), 1),
+        },
+    };
+    let tag = tag.trim();
+    (tag.len() == 4 && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ')).then(|| (tag.to_owned(), value))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +168,10 @@ pub struct Colors {
     pub palette: [Option<Rgb>; 16],
     /// Take the accent from Apolline while it runs.
     pub apolline: bool,
+    /// A color scheme file that colors follow as it changes, like pywal's: as written.
+    pub from: Option<String>,
+    /// What that file held when last read.
+    pub scheme: Option<import::Scheme>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +184,8 @@ pub struct Window {
     pub decorations: Decorations,
     /// Corners of tabs, panels and hint labels, in points.
     pub radius: f32,
+    /// Shaders over the whole window, in order: built-in names or files.
+    pub shaders: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +199,8 @@ pub enum Decorations {
 pub struct Cursor {
     pub shape: CursorShape,
     pub blink: bool,
+    /// A streak where the cursor jumps from.
+    pub trail: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +251,10 @@ pub struct Tabs {
     pub show: TabShow,
     /// What a tab says: {index}, {title}, {cwd} and {dir} are filled in.
     pub title: String,
+    /// A quieter second part after the title: what runs there, or its folder.
+    pub detail: bool,
+    /// A "+" after the last tab.
+    pub plus: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,6 +298,8 @@ pub struct Badges {
     pub ok: String,
     pub failed: String,
     pub running: String,
+    /// The time of day a command ended, after how long it took.
+    pub clock: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,6 +340,11 @@ impl Default for Config {
                 size: 13.0,
                 line_height: 1.2,
                 ligatures: true,
+                weight: 400,
+                bold_weight: 700,
+                bold_family: None,
+                italic_family: None,
+                features: Vec::new(),
             },
             colors: Colors {
                 base: Palette::NIGHT,
@@ -258,6 +355,8 @@ impl Default for Config {
                 accent: None,
                 palette: [None; 16],
                 apolline: true,
+                from: None,
+                scheme: None,
             },
             window: Window {
                 padding: [12, 10],
@@ -267,10 +366,12 @@ impl Default for Config {
                 lines: 30,
                 decorations: Decorations::Transparent,
                 radius: 8.0,
+                shaders: Vec::new(),
             },
             cursor: Cursor {
                 shape: CursorShape::Block,
                 blink: false,
+                trail: false,
             },
             terminal: Terminal {
                 shell: None,
@@ -290,7 +391,9 @@ impl Default for Config {
                 position: TabPosition::Top,
                 style: TabStyle::Pills,
                 show: TabShow::Many,
-                title: "{index} {title}".to_owned(),
+                title: "{dir}".to_owned(),
+                detail: true,
+                plus: true,
             },
             panes: Panes {
                 divider: Divider::Line,
@@ -301,11 +404,23 @@ impl Default for Config {
                 ok: "✓".to_owned(),
                 failed: "✗".to_owned(),
                 running: "●".to_owned(),
+                clock: true,
             },
             hints: HintKeys {
                 alphabet: "asdfghjklqwertyuiopzxcvbnm".to_owned(),
             },
             rules: Vec::new(),
+            background: Background {
+                image: None,
+                fit: Fit::Cover,
+                dim: 0.0,
+                blur: 0,
+            },
+            quick: Quick {
+                key: String::new(),
+                height: 0.45,
+                hide_on_blur: true,
+            },
         }
     }
 }
@@ -382,6 +497,21 @@ pub fn closest<'a>(input: &str, known: &[&'a str]) -> Option<&'a str> {
     read::suggest(input, known)
 }
 
+/// The file `[colors] from` names: "wal" is pywal's, `~/` is home, anything else sits by vif.toml.
+pub fn scheme_path(from: &str) -> PathBuf {
+    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    if from == "wal" {
+        let cache = env::var_os("XDG_CACHE_HOME")
+            .filter(|v| !v.is_empty())
+            .map_or_else(|| home.join(".cache"), PathBuf::from);
+        return cache.join("wal").join("colors.json");
+    }
+    match from.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => dir().join(from),
+    }
+}
+
 pub fn path() -> PathBuf {
     env::var_os("VIF_CONFIG")
         .map(PathBuf::from)
@@ -425,6 +555,7 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("cmd+down", "prompt_next"),
             ("cmd+shift+c", "copy_output"),
             ("cmd+shift+p", "palette"),
+            ("cmd+shift+s", "sessions"),
             ("cmd+shift+f", "history"),
             ("cmd+n", "new_window"),
             ("cmd+t", "new_tab"),
@@ -467,6 +598,7 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("ctrl+shift+down", "prompt_next"),
             ("ctrl+alt+c", "copy_output"),
             ("ctrl+shift+p", "palette"),
+            ("ctrl+shift+s", "sessions"),
             ("ctrl+alt+f", "history"),
             ("ctrl+shift+n", "new_window"),
             ("ctrl+shift+t", "new_tab"),

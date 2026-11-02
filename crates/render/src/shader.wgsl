@@ -2,7 +2,8 @@ struct Globals {
     viewport: vec2<f32>,
     mask_size: vec2<f32>,
     color_size: vec2<f32>,
-    _pad: vec2<f32>,
+    flip: f32,
+    _pad: f32,
 }
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -16,7 +17,7 @@ fn corner(i: u32) -> vec2<f32> {
 }
 
 fn clip(p: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(p.x / g.viewport.x * 2.0 - 1.0, 1.0 - p.y / g.viewport.y * 2.0, 0.0, 1.0);
+    return vec4<f32>(p.x / g.viewport.x * 2.0 - 1.0, (1.0 - p.y / g.viewport.y * 2.0) * g.flip, 0.0, 1.0);
 }
 
 struct RectIn {
@@ -73,9 +74,11 @@ fn fs_rect(in: RectOut) -> @location(0) vec4<f32> {
             a = select(0.0, 1.0, fract(in.local.x / (t * 6.0)) < 0.6);
         }
         case 4u: {
-            // hollow box
-            let edge = min(min(in.local.x, in.size.x - in.local.x), min(in.local.y, in.size.y - in.local.y));
-            a = select(0.0, 1.0, edge < t);
+            // hollow box, rounded when it has a radius
+            let half = in.size * 0.5;
+            let q = abs(in.local - half) - half + vec2<f32>(in.radius);
+            let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - in.radius;
+            a = clamp(0.5 - d, 0.0, 1.0) * clamp(0.5 + d + t, 0.0, 1.0);
         }
         default: {
             if in.radius > 0.0 {

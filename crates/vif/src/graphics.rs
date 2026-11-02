@@ -443,7 +443,7 @@ impl Filter {
     }
 }
 
-fn png(data: &[u8]) -> Result<Image, String> {
+pub(crate) fn png(data: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(io::Cursor::new(data));
     decoder.set_transformations(
         png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA,

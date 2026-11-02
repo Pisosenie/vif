@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const TAG: u32 = 0xE0000;
 const KEEP: usize = 4096;
@@ -55,12 +55,19 @@ pub fn find(zerowidth: &[char], kind: Kind) -> Option<u32> {
 #[derive(Clone, Copy, Debug)]
 pub struct Block {
     pub started: Instant,
+    /// When it started by the wall clock.
+    pub at: SystemTime,
     pub ended: Option<(Duration, i32)>,
 }
 
 impl Block {
     pub fn running(&self) -> Duration {
         self.ended.map_or_else(|| self.started.elapsed(), |(took, _)| took)
+    }
+
+    /// When it ended, or now while it runs.
+    pub fn finished_at(&self) -> SystemTime {
+        self.at + self.running()
     }
 }
 
@@ -99,6 +106,7 @@ impl Blocks {
             id,
             Block {
                 started: Instant::now(),
+                at: SystemTime::now(),
                 ended: None,
             },
         );
@@ -119,15 +127,35 @@ impl Blocks {
     }
 }
 
-/// A duration the way people read one: 3.1s, 41s, 2:41, 1:02:41.
+/// A duration the way a badge shows it: 0.02s, 41.2s, 2:41, 1:02:41.
 pub fn clock(d: Duration) -> String {
     let s = d.as_secs();
     match s {
-        0..10 => format!("{:.1}s", d.as_secs_f32()),
-        10..60 => format!("{s}s"),
+        0 => format!("{:.2}s", d.as_secs_f32()),
+        1..60 => format!("{:.1}s", d.as_secs_f32()),
         60..3600 => format!("{}:{:02}", s / 60, s % 60),
         _ => format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60),
     }
+}
+
+/// A duration in words: 41s, 2m 41s, 1h 2m.
+pub fn spoken(d: Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..60 => format!("{s}s"),
+        60..3600 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", s / 3600, s / 60 % 60),
+    }
+}
+
+/// Hours and minutes on this machine's clock: 16:39.
+pub fn time_of_day(at: SystemTime) -> String {
+    let secs = at.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
+        return String::new();
+    }
+    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
 }
 
 /// Where a byte stream stands, enough to tell when a character gets printed.

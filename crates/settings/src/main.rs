@@ -1,4 +1,5 @@
 mod gallery;
+mod more;
 mod preview;
 mod style;
 
@@ -57,21 +58,27 @@ enum Page {
     Themes,
     Font,
     Colors,
+    Effects,
     Window,
     Cursor,
     Tabs,
+    Quick,
+    Rules,
     Keys,
     Terminal,
 }
 
 impl Page {
-    const ALL: [Page; 8] = [
+    const ALL: [Page; 11] = [
         Page::Themes,
         Page::Font,
         Page::Colors,
+        Page::Effects,
         Page::Window,
         Page::Cursor,
         Page::Tabs,
+        Page::Quick,
+        Page::Rules,
         Page::Keys,
         Page::Terminal,
     ];
@@ -81,9 +88,12 @@ impl Page {
             Page::Themes => "Themes",
             Page::Font => "Font",
             Page::Colors => "Colors",
+            Page::Effects => "Picture and effects",
             Page::Window => "Window",
             Page::Cursor => "Cursor",
             Page::Tabs => "Tabs and splits",
+            Page::Quick => "Quick terminal",
+            Page::Rules => "Rules",
             Page::Keys => "Keys",
             Page::Terminal => "Terminal",
         }
@@ -94,9 +104,14 @@ impl Page {
             Page::Themes => "The whole look in one file. Pick one, or make it yours.",
             Page::Font => "The face, its size and the space between lines.",
             Page::Colors => "The colors you change on top of the theme.",
+            Page::Effects => "A picture behind the text and shaders over it.",
             Page::Window => "Padding, see-through glass and the window frame.",
             Page::Cursor => "How the cursor looks when nothing asks for another shape.",
             Page::Tabs => "Where the tabs sit and how they look, and how splits part.",
+            Page::Quick => "One window that drops in from the top of the screen, its shell always running.",
+            Page::Rules => {
+                "Hosts and folders that change how a pane looks, so production never looks like your laptop."
+            }
             Page::Keys => "Shortcuts for vif itself. Everything else goes to the program.",
             Page::Terminal => "The shell, the scrollback and what programs may do.",
         }
@@ -107,9 +122,12 @@ impl Page {
             Page::Themes => "",
             Page::Font => "font",
             Page::Colors => "colors",
+            Page::Effects => "background",
             Page::Window => "window",
             Page::Cursor => "cursor",
             Page::Tabs => "tabs",
+            Page::Quick => "quick",
+            Page::Rules => "rules",
             Page::Keys => "keys",
             Page::Terminal => "terminal",
         }
@@ -160,7 +178,6 @@ enum Message {
     PadX(f32),
     PadY(f32),
     Opacity(f32),
-    Blur(bool),
     Decorations(Choice),
     Columns(f32),
     Lines(f32),
@@ -192,6 +209,7 @@ enum Message {
     Tick,
     Families(Vec<String>),
     Key(keyboard::Event),
+    More(more::Change),
 }
 
 struct Settings {
@@ -302,6 +320,7 @@ impl Settings {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Page(page) => self.page = page,
+            Message::More(change) => self.change(change),
             Message::Family(family) => self.edit(|e| e.set("font", "family", family)),
             Message::Size(v) => self.edit(|e| e.set_float("font", "size", v)),
             Message::LineHeight(v) => self.edit(|e| e.set_float("font", "line_height", v)),
@@ -372,7 +391,6 @@ impl Settings {
                 self.edit(|e| e.set_padding(x, v.round() as u16));
             }
             Message::Opacity(v) => self.edit(|e| e.set_float("window", "opacity", v)),
-            Message::Blur(on) => self.edit(|e| e.set("window", "blur", if on { 20 } else { 0 })),
             Message::Decorations(Choice(v)) => self.edit(|e| e.set("window", "decorations", v)),
             Message::Columns(v) => self.edit(|e| e.set("window", "columns", v.round() as i64)),
             Message::Lines(v) => self.edit(|e| e.set("window", "lines", v.round() as i64)),
@@ -690,6 +708,9 @@ impl Settings {
         match self.page {
             Page::Themes => self.themes(),
             Page::Tabs => self.tabs(),
+            Page::Effects => self.effects_page(),
+            Page::Quick => self.quick_page(),
+            Page::Rules => self.rules_page(),
             Page::Font => {
                 let family = pick_list(self.families.clone(), Some(c.font.family.clone()), Message::Family)
                     .width(300)
@@ -724,6 +745,7 @@ impl Settings {
                         Some("joins != => >= into one glyph when the font has them"),
                     ),
                 ]
+                .extend(self.font_rows())
                 .spacing(18)
                 .into()
             }
@@ -743,6 +765,7 @@ impl Settings {
                     None,
                 )]
                 .spacing(14);
+                col = col.push(self.colors_from());
                 let mut follow = row![
                     toggler(c.colors.apolline)
                         .on_toggle(Message::Apolline)
@@ -889,14 +912,7 @@ impl Settings {
                         ),
                         Some("the background only; text stays solid"),
                     ),
-                    field(
-                        "Blur behind",
-                        toggler(c.window.blur > 0)
-                            .on_toggle(Message::Blur)
-                            .style(style::toggle(accent))
-                            .into(),
-                        Some("shows when the window is see-through"),
-                    ),
+                    self.blur_row(),
                     field(
                         "Frame",
                         pick_list(decorations, Some(Choice(current)), Message::Decorations)
@@ -1138,6 +1154,7 @@ impl Settings {
                         Some("macOS only")
                     ),
                 ]
+                .push(self.clock_row())
                 .spacing(18)
                 .into()
             }
@@ -1242,6 +1259,7 @@ impl Settings {
                 None
             ),
         ]
+        .extend(self.tab_rows())
         .spacing(18)
         .into()
     }

@@ -3,11 +3,16 @@ name = "vif-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
-wgpu.workspace = true
+wgpu = { workspace = true, features = ["naga-ir"] }
+naga = { version = "27", features = ["glsl-in"] }
 swash.workspace = true
 fontdb.workspace = true
 etagere.workspace = true
 bytemuck.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

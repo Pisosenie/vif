@@ -45,21 +45,28 @@ Run them yourself with `bench/run.sh` (or `bench/run.sh latency` for one); it st
 - Geist Mono built in, so the default needs no font installed.
 - True color, every underline style with its own color (undercurl included), OSC 8 links (⌘-click), OSC 52 clipboard, synchronized output (mode 2026), bracketed paste, focus events, mouse reporting, and the kitty keyboard protocol.
 - Shortcuts work in any keyboard layout: ⌘C and ctrl+w mean the Latin key even with Russian on.
-- Tabs in the title bar and splits in any direction. A new tab or split opens in the folder of the pane you are in.
+- Tabs in the title bar and splits in any direction. A new tab or split opens in the folder of the pane you are in. Each tab says its folder or host in bold and, quieter after it, what runs there; its dot is the accent on the tab in front and green while a command runs. A + opens another.
 - Find in the scrollback with ⌘F: it searches as you type, Enter goes further back, the match is selected so ⌘C copies it.
 - Plain URLs open with ⌘-click (ctrl-click on Linux), not only OSC 8 links.
-- Hints with ⇧⌘H: every link, path, commit hash and IP address on screen gets a letter. The letter opens it: a link in the browser, `file.rs:118` in your `$EDITOR` at that line, a folder as a shell there, a commit as `git show`, each in a tab that closes back to this one. Shift with the letter copies, Alt pastes it at the prompt.
-- Commands as blocks, through shell integration that zsh and bash get without touching their rc files (fish 4 does it on its own; Powerlevel10k is asked to mark its own prompt). A command that failed shows its exit code at the end of its line, one that took a second or more shows how long, and one still running counts up. ⌘↑ ⌘↓ jump between prompts, ⇧⌘C copies what the last command printed. A command that runs longer than `notify_after` and ends while you look elsewhere sends a notification.
+- Hints with ⇧⌘H: every link, path, commit hash and IP address on screen gets a letter, floating over it so the target stays readable, and the bar at the bottom says what the next one does: `k open atlas.rs at 118 in nvim`. The letter opens it: a link in the browser, `file.rs:118` in your `$EDITOR` at that line, a folder as a shell there, a commit as `git show`, each in a tab that closes back to this one. Shift with the letter copies, Alt pastes it at the prompt. ⌘-click (ctrl-click on Linux) on a path does the same, with a note saying what it will do.
+- Commands as blocks, through shell integration that zsh and bash get without touching their rc files (fish 4 does it on its own; Powerlevel10k is asked to mark its own prompt). Each command line ends in a badge: `✓ 41.2s · 16:39`, `✗ exit 101 · 3.1s · 16:40`, `● running · 1:12`. ⇧⌘C copies what the last command printed. ⌘↑ picks the last command as a block, outlined, with a bar of what to do to it: `c` copies its output, `C` the command, `r` runs it again, `f` folds its output into one line that says how many it hides (a click opens it), `p` opens it in a pager, `n` on a running one notifies when it ends, `/` searches; ↑↓ move between blocks, Esc goes back to the prompt. A command that runs longer than `notify_after` and ends while you look elsewhere sends a notification.
 - When a program paints its own background, like vim or htop, the color reaches the window's edges instead of leaving a band of padding.
 - Images through the kitty graphics protocol: PNG and raw pixels, sent inline, in chunks, from a file or a temporary file, zlib or not. Checked with `chafa -f kitty`. An image takes up cells like text, so it scrolls and clears with them, and stays in one piece when the window narrows.
 - On Linux the clipboard goes through the window's own Wayland connection, with the primary selection: selecting copies, the middle button pastes.
 - Under [Apolline](https://github.com/Pisosenie/apolline) the cursor, selection and accent follow its accent color as it changes, read from the file it keeps for GTK apps. Colors you set yourself still win; `apolline = false` turns it off.
-- Shells that outlive their window. Each one runs under a small host process that keeps the last two megabytes it printed; close the window or quit vif and they go on running, and the next vif brings them back as tabs with their output, scrollback and variables as they were. A host starts in about 11 ms on an M2 Pro, and output through it is no slower. Closing a tab or typing `exit` ends one for good. `vif sessions` lists them, `vif attach ID` opens one, `sessions = false` turns it off.
-- Every command kept with what it printed, on this machine only, for `archive_days` (30 by default): ⇧⌘F finds a command by what it was or by any line of its output, from any tab and from past days, and opens it whole in a pager; `vif history WORDS` does the same in the shell. Commands typed with a space in front are not kept.
+- Shells that outlive their window. Each one runs under a small host process that keeps the last two megabytes it printed; close the window or quit vif and they go on running, and the next vif brings them back in the same windows, tabs and splits, with their output, scrollback and variables as they were. A host starts in about 11 ms on an M2 Pro, and output through it is no slower. Closing a tab or typing `exit` ends one for good. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets one go of this window and leaves it running, ctrl-R names it. `vif sessions` lists them, `vif attach NAME` opens one, `sessions = false` turns it all off.
+- A quick terminal that drops in from the top of the screen, its shell always running. On macOS give it a key once, like `vif set quick.key "ctrl+alt+space"`, and that key shows and hides it from any app and gives the focus back to the app you were in; on Linux `vif niri` gives niri its place and key, see [Under Apolline and niri](#under-apolline-and-niri).
+- Every command kept with what it printed, on this machine only, for `archive_days` (30 by default). ⇧⌘F searches everything: what this pane shows, what every open pane shows, or all of that and the kept commands from past days, by words or a regular expression (⌥R), with case or without (⌥C). Enter goes to the line where it is, or opens a kept command whole in a pager; `vif history WORDS` searches the kept ones from the shell. Commands typed with a space in front are not kept.
+- A scrollbar while you look back, marked where each prompt is, red where a command failed and in the accent where a search matched.
 - Rules by host and folder: a pane `ssh`'d into a host that matches, or sitting in a folder that matches, takes the rule's theme, colors and a label in its corner, so production never looks like your laptop. It reads what `ssh` connects to, so the host needs nothing installed.
 - A command palette, ⇧⌘P: every action with its keys, every theme and every settings page, found by a few letters.
 - Over `ssh`, hosts that don't know `xterm-vif` get `xterm-256color` without you doing anything.
-- Themes that change the whole look, not only colors: where the tabs sit and how they are drawn, what they say, how splits part and fade, how round the corners are, the marks on command badges, the letters hints use. Eight come built in, a theme of your own is one file, and windows follow it as you save. See [Themes](#themes).
+- Themes that change the whole look, not only colors: where the tabs sit and how they are drawn, what they say, how splits part and fade, how round the corners are, the marks on command badges, the letters hints use, a picture behind it all. Nine come built in, a theme of your own is one file, and windows follow it as you save. `vif theme add` takes colors from kitty, Ghostty, Alacritty, WezTerm, foot, iTerm, Konsole, Windows Terminal, VS Code, base16 and Xresources files and makes a theme of them. See [Themes](#themes).
+- Colors that follow your wallpaper: `[colors] from = "wal"` reads pywal's colors, or any color file in the formats above, and changes with it.
+- A picture behind the text, cover or contain or tiled, faded toward the background and blurred once when it loads, so it costs nothing after.
+- Shaders over the whole window in Shadertoy's GLSL, the way Ghostty takes them, so its shader collections work as they are: `crt`, `bloom` and a cursor trail come with vif. A shader that doesn't compile says which line, and `vif check` checks them before you look. They draw only while something moves, unless they animate on their own.
+- Fonts to taste: a weight for regular and for bold, a cursive italic from another face, OpenType features like `ss01` or `-calt`.
+- `vif set window.opacity 0.9` changes one setting from the shell, keeps your comments, and says when a key is misspelled.
 - Its own terminfo, `xterm-vif`, compiled on first run into `~/.local/share/vif/terminfo`, so vim and nvim get undercurl and cursor shapes. Set `term = "xterm-256color"` for hosts over ssh that don't have it.
 
 ## Themes
@@ -74,7 +81,7 @@ vif theme add https://example.com/neon.toml   # or a file
 vif theme check mine       # problems in it, with line and fix
 ```
 
-Built in: `night` (the default), `day`, `dracula`, `catppuccin` (Mocha), `gruvbox`, `nord`, `phosphor` and `paper`. They differ in more than colors: gruvbox has powerline tabs and square corners, catppuccin keeps its tabs at the bottom with the folder for a title, phosphor is green on black with plain `[1] title` tabs and `ok`/`err` badges.
+Built in: `night` (the default), `day`, `dracula`, `catppuccin` (Mocha), `gruvbox`, `nord`, `phosphor`, `paper` and `alarm`, the red one for [rules](#rules) on production hosts. They differ in more than colors: gruvbox has powerline tabs and square corners, catppuccin keeps its tabs at the bottom with the folder for a title, phosphor is green on black with plain `[1] title` tabs and `ok`/`err` badges.
 
 A theme of your own lives in `~/.config/vif/themes/<name>.toml` and can start from another one and change only what differs:
 
@@ -105,6 +112,7 @@ show = "all"               # "failures", "none"
 ok = "✓"
 failed = "✗"
 running = "●"
+clock = true               # the time of day a command ended
 
 [hints]
 alphabet = "asdfjkl"
@@ -149,11 +157,16 @@ family = "Geist Mono"
 size = 13
 line_height = 1.2
 ligatures = true
+weight = 400
+bold_weight = 700
+# italic_family = "Victor Mono"   bold_family too
+# features = ["ss01", "-calt"]
 
 [colors]
 # foreground, background, cursor, selection, accent = "#rrggbb"
 # palette = ["#1e2026", …]  up to 16 colors
 apolline = true            # take Apolline's accent for cursor, selection and accent while it runs
+# from = "wal"             # follow pywal, or a color file from kitty, Ghostty, Alacritty, iTerm…
 
 [window]
 padding = [12, 10]         # or one number
@@ -163,10 +176,18 @@ columns = 100
 lines = 30
 decorations = "transparent"  # macOS: tabs in the title bar; Linux: no title bar, the compositor draws borders. "full" or "none"
 radius = 8                 # corners of tabs, panels and hint labels
+# shader = ["crt"]         # built-in names, or files in shaders/ next to vif.toml
+
+[background]
+# image = "~/Pictures/wall.jpg"
+fit = "cover"              # "contain", "stretch", "center", "tile"
+dim = 0                    # 0 to 1, toward the background color
+blur = 0                   # pixels
 
 [cursor]
 shape = "block"            # "beam", "underline"
 blink = false
+trail = false              # a streak where the cursor jumps from
 
 [terminal]
 # shell = "/bin/zsh"
@@ -185,7 +206,9 @@ archive_days = 30          # keep each command and its output this long, 0 keeps
 position = "top"
 style = "pills"
 show = "many"
-title = "{index} {title}"
+title = "{dir}"            # also {index}, {title}, {cwd}; {dir} is the host over ssh
+detail = true              # what runs there, or the folder, after the title
+plus = true
 
 [panes]
 divider = "line"
@@ -200,11 +223,16 @@ running = "●"
 [hints]
 alphabet = "asdfghjklqwertyuiopzxcvbnm"
 
+[quick]
+key = ""                   # macOS, like "ctrl+alt+space"; elsewhere bind `vif quick`
+height = 0.45
+hide_on_blur = true
+
 [keys]
 "cmd+shift+t" = "new_tab"  # an action, or "none" to free a default
 ```
 
-Default keys on macOS (Linux uses ctrl+shift, ctrl+alt+c to copy the last output and ctrl+alt+f to find in kept commands):
+Default keys on macOS (Linux uses ctrl+shift, ctrl+alt+c to copy the last output and ctrl+alt+f to search everything):
 
 | | |
 |---|---|
@@ -212,14 +240,19 @@ Default keys on macOS (Linux uses ctrl+shift, ctrl+alt+c to copy the last output
 | ⌘[ ⌘] next and previous pane, ⌥⌘ arrows to move by direction | ⇧⌘[ ⇧⌘] and ⌘1…⌘9 switch tabs |
 | ⌘C ⌘V copy and paste, ⌘F find | ⌘= ⌘- ⌘0 font size |
 | ⇧PageUp ⇧PageDown, ⌘Home ⌘End scroll | ⌘, settings |
-| ⇧⌘H hints | ⌘↑ ⌘↓ previous and next prompt, ⇧⌘C copy the last output |
-| ⇧⌘P command palette | ⇧⌘F find in every command kept |
+| ⇧⌘H hints | ⌘↑ ⌘↓ pick a command block, ⇧⌘C copy the last output |
+| ⇧⌘P command palette | ⇧⌘F search everything |
+| ⇧⌘S sessions | `[quick] key` quick terminal |
 
 ## Installing
 
-macOS: `tools/bundle-macos.sh` builds `target/release/vif.app` with both binaries and the icon; drag it to Applications.
+Arch: `packaging/arch/vif` builds the release and `packaging/arch/vif-git` the newest commit, with their `.SRCINFO`, ready for the AUR. Both install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs, so namcap calls them unneeded.
 
-Arch: `packaging/arch/PKGBUILD` (`vif-git`) installs `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon.
+```sh
+cd packaging/arch/vif-git && makepkg -si
+```
+
+macOS: `tools/bundle-macos.sh` builds `target/release/vif.app` with both binaries and the icon (`--universal` for Apple silicon and Intel in one); drag it to Applications. `tools/package-linux.sh` builds a tarball with an `install.sh` for other Linux systems.
 
 From source anywhere:
 
@@ -230,10 +263,23 @@ target/release/vif
 
 `vif-settings` has to sit next to `vif` (or on `PATH`) for ⌘, to find it. `tools/headless.sh shot.png` takes a screenshot of vif under a throwaway headless sway on Linux.
 
+## Under Apolline and niri
+
+vif takes [Apolline](https://github.com/Pisosenie/apolline)'s accent for its cursor, selection, tabs and badges as Apolline changes it, and leaves its window to Apolline's rules: the rounded corners, the opacity of windows in front and behind. With no title bar of its own on Linux, a vif window is niri's to frame.
+
+For the quick terminal, `vif niri` writes the niri side from your `vif.toml`: a rule that floats `vif-quick` along the top at `[quick] height`, and `Mod+`` to show and hide it. Keep it next to the fragment Apolline includes:
+
+```sh
+vif niri > ~/.config/niri/vif.kdl
+echo 'include "vif.kdl"' >> ~/.config/niri/config.kdl
+```
+
+Run `vif niri` again after changing the height. To open vif where niri opens a terminal, point your `Mod+T` at it: `Mod+T { spawn "vif"; }`. vif's own shortcuts use ctrl+shift on Linux, so none of them meet niri's or Apolline's `Mod` keys. Under sway the same takes `for_window [app_id="vif-quick"] floating enable, resize set 100 ppt 45 ppt, move position 0 0` and `bindsym $mod+grave exec vif quick`.
+
 ## Inside
 
-- `crates/config`: `vif.toml` read with every problem reported and nothing fatal, and written in place with `toml_edit`. Themes are read the same way and laid under it; the built-in ones are in `assets/themes`.
-- `crates/render`: the wgpu renderer, fonts and atlas, and the tab bar in every style. The settings window uses it too, inside iced. Fallback fonts are mapped, not read: the first emoji costs about a megabyte, not the 190 MB of Apple Color Emoji.
+- `crates/config`: `vif.toml` read with every problem reported and nothing fatal, and written in place with `toml_edit`. Themes are read the same way and laid under it; the built-in ones are in `assets/themes`. Colors from other terminals' files are read by what they say, not what they are called.
+- `crates/render`: the wgpu renderer, fonts and atlas, and the tab bar in every style. The settings window uses it too, inside iced. Fallback fonts are mapped, not read: the first emoji costs about a megabyte, not the 190 MB of Apple Color Emoji. Shaders are GLSL that naga reads and checks before the GPU sees it; the frame goes through them only when there are any.
 - `crates/vif`: the terminal. Emulation is [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal): a grid, scrollback, reflow and a VT parser that have run in Alacritty for years. Writing those again would buy nothing; the speed that is left to win sits in rendering, fonts and input, and that is what vif does itself.
 - `crates/settings`: the settings window, in iced.
 

@@ -25,6 +25,21 @@ const PAGES: [(&str, &str); 8] = [
 pub(super) struct Palette {
     query: String,
     selected: usize,
+    /// Sessions no window has, as they were when the palette opened: what they are, their id.
+    waiting: Vec<(String, String)>,
+}
+
+impl Palette {
+    pub(super) fn open() -> Self {
+        let waiting = crate::session::free()
+            .into_iter()
+            .map(|id| (crate::session::describe(&id), id))
+            .collect();
+        Self {
+            waiting,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -32,6 +47,7 @@ enum Command {
     Action(&'static str),
     Theme(String),
     Settings(&'static str),
+    Attach(String),
 }
 
 struct Entry {
@@ -65,6 +81,12 @@ impl Win {
                 String::new()
             },
             command: Command::Theme(t.name),
+        }));
+        let waiting = self.palette.as_ref().map_or(&[][..], |p| &p.waiting[..]);
+        all.extend(waiting.iter().map(|(what, id)| Entry {
+            label: format!("Session: {what}"),
+            keys: "waiting".to_owned(),
+            command: Command::Attach(id.clone()),
         }));
         all.extend(PAGES.iter().map(|(page, title)| Entry {
             label: format!("Settings: {title}"),
@@ -141,6 +163,11 @@ impl Win {
                 }
             }
             Command::Settings(page) => open_settings(Some(page)),
+            Command::Attach(id) => {
+                if let Err(err) = self.attach_tab(shared, id) {
+                    log::warn!("can't take the session: {err}");
+                }
+            }
         }
         false
     }
@@ -216,6 +243,9 @@ impl Win {
 
 /// "split_right" as people say it: "Split right".
 fn spoken(action: &str) -> String {
+    if action == "hud" {
+        return "Key to frame timing (HUD)".to_owned();
+    }
     let words = action.replace('_', " ");
     let mut chars = words.chars();
     match chars.next() {
@@ -225,7 +255,7 @@ fn spoken(action: &str) -> String {
 }
 
 /// A binding the way the keyboard shows it.
-fn keycaps(combo: &str) -> String {
+pub(super) fn keycaps(combo: &str) -> String {
     let mac = cfg!(target_os = "macos");
     let parts: Vec<String> = combo
         .split('+')

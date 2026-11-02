@@ -1,0 +1,57 @@
+# Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
+pkgname=vif
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='A fast GPU terminal with themes, command blocks and shells that outlive the window'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Pisosenie/vif'
+license=('MIT OR Apache-2.0')
+# Linked: glibc and libgcc. Wayland, xkbcommon, Vulkan and EGL are opened at run time.
+depends=('glibc' 'libgcc' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'hicolor-icon-theme')
+optdepends=(
+  'vulkan-driver: drawing through Vulkan; without one vif draws through OpenGL'
+  'opengl-driver: drawing through OpenGL where there is no Vulkan'
+  'libx11: running under X11'
+  'libxcursor: running under X11'
+  'libxi: running under X11'
+  'libxrandr: running under X11'
+  'libxkbcommon-x11: running under X11'
+)
+makedepends=('cargo' 'git' 'ncurses')
+source=("$pkgname::git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p vif -p vif-settings
+}
+
+check() {
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$pkgname"
+  install -Dm755 target/release/vif "$pkgdir/usr/bin/vif"
+  install -Dm755 target/release/vif-settings "$pkgdir/usr/bin/vif-settings"
+  install -dm755 "$pkgdir/usr/share/terminfo"
+  tic -x -o "$pkgdir/usr/share/terminfo" assets/xterm-vif.terminfo
+  install -Dm644 assets/vif.desktop "$pkgdir/usr/share/applications/vif.desktop"
+  install -Dm644 assets/vif.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/vif.svg"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 assets/fonts/OFL.txt "$pkgdir/usr/share/licenses/$pkgname/OFL-GEIST"
+}

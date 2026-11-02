@@ -1,7 +1,7 @@
 //! `vif theme`: list, switch, start your own, install and check themes from the shell.
 
+use crate::tilde;
 use std::fs;
-use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use vif_config::{Config, Editor, themes};
@@ -9,7 +9,8 @@ use vif_config::{Config, Editor, themes};
 pub const USAGE: &str = "       vif theme                   list themes, * marks the one in use
        vif theme use NAME          switch every window to it
        vif theme new NAME [FROM]   start your own from FROM (or the current one) and switch
-       vif theme add FILE|URL      install a theme file
+       vif theme add FILE|URL      install a theme: vif's own, or colors from kitty, Ghostty,
+                                   Alacritty, iTerm, base16, Xresources, Windows Terminal, pywal
        vif theme check [NAME]      show problems in a theme";
 
 pub fn run(args: &[String]) -> ExitCode {
@@ -93,12 +94,12 @@ fn add(source: &str) -> Result<(), String> {
     } else {
         fs::read_to_string(source).map_err(|e| format!("can't read {source}: {e}"))?
     };
-    let stem = source
-        .rsplit('/')
-        .next()
-        .unwrap_or(source)
-        .trim_end_matches(".toml")
-        .to_owned();
+    let file = source.rsplit('/').next().unwrap_or(source);
+    let file = file.split('?').next().unwrap_or(file).replace("%20", " ");
+    let stem = match file.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.len() <= 12 && !ext.contains(' ') => stem.to_owned(),
+        _ => file.clone(),
+    };
     let name: String = stem
         .chars()
         .map(|c| {
@@ -112,6 +113,8 @@ fn add(source: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(format!("can't make a theme name out of {source}"));
     }
+    let name = name.to_lowercase().trim_matches('-').to_owned();
+    let text = themes::adopt(&text, &stem);
     let (path, diagnostics) = themes::install(&text, &name)?;
     if !diagnostics.is_empty() {
         print!("{}", vif_config::report(&text, &diagnostics));
@@ -137,12 +140,4 @@ fn check(name: Option<&str>) -> Result<(), String> {
     }
     print!("{}", vif_config::report(&theme.source, &diagnostics));
     Err(format!("{} problem(s), the rest applies", diagnostics.len()))
-}
-
-fn tilde(path: &Path) -> String {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
 }

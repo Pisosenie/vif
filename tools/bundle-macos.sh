@@ -1,9 +1,17 @@
 #!/bin/sh
 # Builds target/release/vif.app: both binaries, the icon and an ad-hoc signature.
+# --universal makes one app for Apple silicon and Intel.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-cargo build --release -p vif -p vif-settings
+universal=${1:-}
+if [ "$universal" = --universal ]; then
+    for arch in aarch64 x86_64; do
+        cargo build --release --locked --target $arch-apple-darwin -p vif -p vif-settings
+    done
+else
+    cargo build --release -p vif -p vif-settings
+fi
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 app=target/release/vif.app
 work=$(mktemp -d)
@@ -11,7 +19,14 @@ trap 'rm -rf "$work"' EXIT
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/vif target/release/vif-settings "$app/Contents/MacOS/"
+for bin in vif vif-settings; do
+    if [ "$universal" = --universal ]; then
+        lipo -create -output "$app/Contents/MacOS/$bin" target/aarch64-apple-darwin/release/$bin \
+            target/x86_64-apple-darwin/release/$bin
+    else
+        cp target/release/$bin "$app/Contents/MacOS/"
+    fi
+done
 
 swiftc -O -o "$work/icon" tools/icon.swift
 mkdir "$work/vif.iconset"

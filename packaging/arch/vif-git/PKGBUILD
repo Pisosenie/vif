@@ -1,16 +1,22 @@
 # Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
 pkgname=vif-git
 _name=vif
-pkgver=r0
+pkgver=r1.1cdaff9
 pkgrel=1
-pkgdesc='A fast GPU terminal, set up in a window with a live preview or in a file'
+pkgdesc='A fast GPU terminal with themes, command blocks and shells that outlive the window'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Pisosenie/vif'
 license=('MIT OR Apache-2.0')
-depends=('fontconfig' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'gcc-libs' 'glibc' 'hicolor-icon-theme')
+# Linked: glibc and libgcc. Wayland, xkbcommon, Vulkan and EGL are opened at run time.
+depends=('glibc' 'libgcc' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'hicolor-icon-theme')
 optdepends=(
-  'vulkan-driver: GPU rendering; without one vif falls back to OpenGL'
+  'vulkan-driver: drawing through Vulkan; without one vif draws through OpenGL'
+  'opengl-driver: drawing through OpenGL where there is no Vulkan'
   'libx11: running under X11'
+  'libxcursor: running under X11'
+  'libxi: running under X11'
+  'libxrandr: running under X11'
+  'libxkbcommon-x11: running under X11'
 )
 makedepends=('cargo' 'git' 'ncurses')
 provides=("$_name")
@@ -30,6 +36,7 @@ prepare() {
 }
 
 build() {
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
   cd "$_name"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
@@ -37,6 +44,7 @@ build() {
 }
 
 check() {
+  export RUSTFLAGS="${RUSTFLAGS-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase"
   cd "$_name"
   export RUSTUP_TOOLCHAIN=stable
   cargo test --frozen --release --workspace

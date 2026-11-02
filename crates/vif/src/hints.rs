@@ -33,13 +33,51 @@ pub enum Kind {
 pub type Cells = Vec<(usize, usize, char)>;
 
 /// Something worth picking, with every place it shows on screen.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Target {
     pub kind: Kind,
     pub text: String,
     pub label: String,
     /// Each occurrence as the cells it covers.
     pub at: Vec<Cells>,
+}
+
+impl Target {
+    /// What picking it does, in a few words: "open atlas.rs at 118 in nvim".
+    pub fn describe(&self) -> String {
+        match &self.kind {
+            Kind::Url => {
+                let rest = self.text.split_once("://").map_or(self.text.as_str(), |(_, r)| r);
+                format!("open {} in the browser", short(rest, 40))
+            }
+            Kind::Path { path, .. } if path.is_dir() => format!("open a shell in {}", name(path)),
+            Kind::Path { path, line: Some(line) } => format!("open {} at {line} in {}", name(path), editor()),
+            Kind::Path { path, line: None } => format!("open {} in {}", name(path), editor()),
+            Kind::Hash => format!("show commit {}", short(&self.text, 12)),
+            Kind::Ip => format!("copy {}", self.text),
+        }
+    }
+}
+
+fn name(path: &Path) -> String {
+    path.file_name()
+        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+fn short(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    text.chars().take(max - 1).collect::<String>() + "…"
+}
+
+/// The editor files open in, by its name.
+pub fn editor() -> String {
+    let command = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_owned());
+    let program = command.split_whitespace().next().unwrap_or("vi");
+    program.rsplit('/').next().unwrap_or(program).to_owned()
 }
 
 pub struct Hints {

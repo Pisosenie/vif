@@ -15,6 +15,17 @@ pub fn cwd(pty: &File, shell: u32) -> Option<PathBuf> {
     dir(front(pty, shell)).or_else(|| dir(shell as i32))
 }
 
+/// Whether a command line is a shell's own, like `-zsh`.
+pub fn is_shell(argv: &[String]) -> bool {
+    let name = argv
+        .first()
+        .map_or("", |a| a.rsplit('/').next().unwrap_or(a).trim_start_matches('-'));
+    matches!(
+        name,
+        "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "nu" | "elvish" | "xonsh"
+    )
+}
+
 /// The command line of whatever runs in front, like `ssh prod-db`.
 pub fn command(pty: &File, shell: u32) -> Option<Vec<String>> {
     args(front(pty, shell))

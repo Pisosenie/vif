@@ -33,7 +33,9 @@ blink = false
 position = "top"              # "bottom"
 style = "pills"               # "underline", "powerline", "plain"
 show = "many"                 # "always", "never": "many" hides the bar with one tab
-title = "{index} {title}"     # also {cwd} and {dir}
+title = "{dir}"              # {index}, {title}, {cwd}; {dir} is the host over ssh
+detail = true                # what runs there, or the folder, after the title
+plus = true                  # a "+" after the last tab
 
 [panes]
 divider = "line"              # "gap"

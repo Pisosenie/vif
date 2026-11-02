@@ -206,6 +206,15 @@ pub fn create(name: &str, from: &str) -> Result<PathBuf, String> {
 }
 
 /// Copies a theme file into the themes folder, under its file name.
+/// A theme file from `text`: as it is when it's one of vif's, converted when it's another
+/// terminal's colors.
+pub fn adopt(text: &str, title: &str) -> String {
+    if read::apply(text, &mut Config::default(), true).is_empty() {
+        return text.to_owned();
+    }
+    crate::import::read(text).map_or_else(|| text.to_owned(), |scheme| scheme.theme(title))
+}
+
 pub fn install(text: &str, name: &str) -> Result<(PathBuf, Vec<Diagnostic>), String> {
     let diagnostics = read::apply(text, &mut Config::default(), true);
     let path = dir().join(format!("{name}.toml"));

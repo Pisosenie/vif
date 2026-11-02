@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag matches the version in Cargo.toml
+        run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build vif.app for Apple silicon and Intel
+        run: tools/bundle-macos.sh --universal
+      - name: Zip it
+        run: ditto -c -k --keepParent target/release/vif.app "vif-${GITHUB_REF_NAME#v}-macos.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: vif-*-macos.zip
+
+  linux:
+    needs: version
+    strategy:
+      matrix:
+        # The oldest supported Ubuntu, so the binaries run on any glibc from 2022 on.
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the tarball
+        run: tools/package-linux.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.runner }}
+          path: target/release/vif-*-linux.tar.gz
+
+  publish:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+      - name: Checksums
+        run: sha256sum vif-* > SHA256SUMS
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "vif ${GITHUB_REF_NAME#v}"
+          --generate-notes vif-* SHA256SUMS

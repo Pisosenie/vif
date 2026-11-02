@@ -79,11 +79,13 @@ pub fn start(spec: &Spec) -> io::Result<String> {
     Ok(id)
 }
 
-/// What a host says first: its shell, that shell's terminal, and whether a window has it.
+/// What a host says first: its shell, that shell's terminal, whether a window has it, and since
+/// when none has.
 struct Hello {
     pid: u32,
     tty: PathBuf,
     attached: bool,
+    since: Option<SystemTime>,
 }
 
 fn hello(id: &str) -> io::Result<(UnixStream, Hello)> {
@@ -97,6 +99,11 @@ fn hello(id: &str) -> io::Result<(UnixStream, Hello)> {
             pid,
             tty: PathBuf::from(tty),
             attached: attached == "1",
+            since: words
+                .next()
+                .and_then(|s| s.parse().ok())
+                .filter(|s| *s > 0)
+                .map(|s| UNIX_EPOCH + Duration::from_secs(s)),
         }),
         _ => None,
     };
@@ -134,11 +141,102 @@ pub fn free() -> Vec<String> {
             Err(_) => {
                 let _ = fs::remove_file(&path);
                 let _ = fs::remove_file(socket(&id, "data"));
+                let _ = fs::remove_file(dir().join(format!("{id}.name")));
             }
         }
     }
     found.sort();
     found.into_iter().map(|(_, id)| id).collect()
+}
+
+/// A session as the sessions list shows it.
+pub struct Shown {
+    pub id: String,
+    pub name: Option<String>,
+    pub what: String,
+    pub attached: bool,
+    pub since: Option<SystemTime>,
+}
+
+/// Every session there is, newest first.
+pub fn all() -> Vec<Shown> {
+    let mut found: Vec<(SystemTime, Shown)> = Vec::new();
+    for entry in fs::read_dir(dir()).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "ctl") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(str::to_owned) else {
+            continue;
+        };
+        let Ok((_, hello)) = hello(&id) else {
+            continue;
+        };
+        let born = entry.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+        found.push((
+            born,
+            Shown {
+                name: name(&id),
+                what: describe(&id),
+                attached: hello.attached,
+                since: hello.since,
+                id,
+            },
+        ));
+    }
+    found.sort_by_key(|(born, _)| std::cmp::Reverse(*born));
+    found.into_iter().map(|(_, s)| s).collect()
+}
+
+/// The last `bytes` a session printed, without taking it from the window that has it.
+pub fn peek(id: &str, bytes: usize) -> Option<Vec<u8>> {
+    let (ctl, _) = hello(id).ok()?;
+    ctl.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
+    (&ctl).write_all(format!("peek {bytes}\n").as_bytes()).ok()?;
+    let mut reader = BufReader::new(&ctl);
+    let mut head = String::new();
+    reader.read_line(&mut head).ok()?;
+    let len: usize = head.trim().strip_prefix("peek ")?.parse().ok()?;
+    let mut out = vec![0; len];
+    reader.read_exact(&mut out).ok()?;
+    Some(out)
+}
+
+/// A session's name, if it was given one.
+pub fn name(id: &str) -> Option<String> {
+    fs::read_to_string(dir().join(format!("{id}.name")))
+        .ok()
+        .map(|n| n.trim().to_owned())
+        .filter(|n| !n.is_empty())
+}
+
+pub fn rename(id: &str, name: &str) -> io::Result<()> {
+    let path = dir().join(format!("{id}.name"));
+    if name.trim().is_empty() {
+        return fs::remove_file(path).or(Ok(()));
+    }
+    fs::write(path, name.trim())
+}
+
+/// The session a name or an id stands for.
+pub fn find(name_or_id: &str) -> Option<String> {
+    let all = all();
+    all.iter()
+        .find(|s| s.id == name_or_id)
+        .or_else(|| all.iter().find(|s| s.name.as_deref() == Some(name_or_id)))
+        .map(|s| s.id.clone())
+}
+
+/// A session in words: its folder, and what runs there unless that is the shell itself.
+pub fn describe(id: &str) -> String {
+    let Some((pid, tty)) = hello(id).ok().and_then(|(_, h)| Some((h.pid, open_tty(&h.tty)?))) else {
+        return id.to_owned();
+    };
+    let place = crate::process::cwd(&tty, pid).map_or_else(|| id.to_owned(), |p| crate::tilde(&p));
+    match crate::process::command(&tty, pid).filter(|argv| !crate::process::is_shell(argv)) {
+        Some(argv) => format!("{place} · {}", argv.join(" ")),
+        None => place,
+    }
 }
 
 /// A window's end of a session: what alacritty's event loop needs from a PTY.
@@ -236,6 +334,8 @@ struct State {
     client: Option<(u64, UnixStream)>,
     turns: u64,
     controls: Vec<UnixStream>,
+    /// When the last window let go of it, in seconds since 1970.
+    since: u64,
 }
 
 /// `vif session-host ID SPEC`: holds one shell until it ends.
@@ -317,6 +417,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                 let mut s = shared.lock().expect("state");
                 if s.client.as_ref().is_some_and(|(t, _)| *t == turn) {
                     s.client = None;
+                    s.since = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
                 }
             });
         }
@@ -325,16 +426,22 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let (shared, sizes) = (state.clone(), pty.clone());
     std::thread::spawn(move || {
         for stream in ctl.incoming().flatten() {
-            let attached = u8::from(shared.lock().expect("state").client.is_some());
+            let (attached, since) = {
+                let s = shared.lock().expect("state");
+                (u8::from(s.client.is_some()), s.since)
+            };
             let mut stream = stream;
-            let hello = format!("hello {pid} {} {attached}\n", tty_path.display());
+            let hello = format!("hello {pid} {} {attached} {since}\n", tty_path.display());
             if stream.write_all(hello.as_bytes()).is_err() {
                 continue;
             }
             if let Ok(copy) = stream.try_clone() {
                 shared.lock().expect("state").controls.push(copy);
             }
-            let sizes = sizes.clone();
+            let (sizes, ring) = (sizes.clone(), shared.clone());
+            let Ok(mut reply) = stream.try_clone() else {
+                continue;
+            };
             std::thread::spawn(move || {
                 for line in BufReader::new(stream).lines() {
                     let Ok(line) = line else {
@@ -352,6 +459,19 @@ fn serve(args: &[String]) -> io::Result<i32> {
                         });
                     } else if line == "kill" {
                         unsafe { libc::kill(pid as i32, libc::SIGHUP) };
+                    } else if let Some(n) = line.strip_prefix("peek ").and_then(|n| n.parse::<usize>().ok()) {
+                        let tail: Vec<u8> = {
+                            let s = ring.lock().expect("state");
+                            s.ring.iter().skip(s.ring.len().saturating_sub(n)).copied().collect()
+                        };
+                        let head = format!("peek {}\n", tail.len());
+                        if reply
+                            .write_all(head.as_bytes())
+                            .and_then(|()| reply.write_all(&tail))
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
             });
@@ -383,6 +503,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     };
     let _ = fs::remove_file(&ctl_path);
     let _ = fs::remove_file(&data_path);
+    let _ = fs::remove_file(dir().join(format!("{id}.name")));
     let mut s = state.lock().expect("state");
     for control in &mut s.controls {
         let _ = control.write_all(format!("exit {code}\n").as_bytes());

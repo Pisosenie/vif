@@ -1,6 +1,7 @@
 mod atlas;
 mod builtin;
 pub mod chrome;
+mod effects;
 mod font;
 
 use std::collections::HashMap;
@@ -13,7 +14,18 @@ use swash::zeno::{Angle, Format, Transform};
 use atlas::Atlas;
 use font::Fonts;
 
-pub use font::{FontConfig, Metrics, Style};
+pub use effects::{Effects, check as check_shader};
+pub use font::{Faces, FontConfig, Metrics, Style};
+
+/// Shaders that come with vif, by name.
+pub const BUILT_IN_SHADERS: [(&str, &str); 3] = [
+    (
+        "cursor-trail",
+        include_str!("../../../assets/shaders/cursor-trail.glsl"),
+    ),
+    ("crt", include_str!("../../../assets/shaders/crt.glsl")),
+    ("bloom", include_str!("../../../assets/shaders/bloom.glsl")),
+];
 
 pub const RECT_FILL: u32 = 0;
 pub const RECT_CURL: u32 = 1;
@@ -78,6 +90,8 @@ pub struct Scene {
     pub over: Vec<Sprite>,
     /// Slices of uploaded images, keyed by [`Renderer::image`]'s key; uv is 0–1.
     pub images: Vec<(u64, Sprite)>,
+    /// Images under everything else, like a background picture.
+    pub under: Vec<(u64, Sprite)>,
 }
 
 impl Scene {
@@ -88,6 +102,7 @@ impl Scene {
         self.front.clear();
         self.over.clear();
         self.images.clear();
+        self.under.clear();
     }
 
     pub fn extend(&mut self, other: &Scene) {
@@ -125,7 +140,9 @@ struct Globals {
     viewport: [f32; 2],
     mask_size: [f32; 2],
     color_size: [f32; 2],
-    _pad: [f32; 2],
+    /// -1 draws upside down, the way shaders written for GL read a frame.
+    flip: f32,
+    _pad: f32,
 }
 
 struct Instances {
@@ -194,8 +211,14 @@ pub struct Renderer {
     image_pipeline: wgpu::RenderPipeline,
     pictures: HashMap<u64, Picture>,
     picture_runs: Vec<(u64, u32, u32)>,
+    /// How many of the runs go under everything.
+    under_runs: usize,
     pictures_buffer: Instances,
     frame: u64,
+    format: wgpu::TextureFormat,
+    effects: Option<Effects>,
+    /// Drawing through GL, which turns shader output over on the way to a window.
+    gl: bool,
 }
 
 impl Renderer {
@@ -364,8 +387,12 @@ impl Renderer {
             image_pipeline,
             pictures: HashMap::new(),
             picture_runs: Vec::new(),
+            under_runs: 0,
             pictures_buffer: Instances::new(device),
             frame: 0,
+            format,
+            effects: None,
+            gl: false,
         }
     }
 
@@ -664,11 +691,16 @@ impl Renderer {
 
     /// Uploads the scene; call before [`Renderer::draw`].
     pub fn prepare(&mut self, scene: &Scene, width: u32, height: u32) {
+        self.prepare_flipped(scene, width, height, false);
+    }
+
+    fn prepare_flipped(&mut self, scene: &Scene, width: u32, height: u32, flipped: bool) {
         let globals = Globals {
             viewport: [width.max(1) as f32, height.max(1) as f32],
             mask_size: [self.mask.size() as f32; 2],
             color_size: [self.color.size() as f32; 2],
-            _pad: [0.0; 2],
+            flip: if flipped { -1.0 } else { 1.0 },
+            _pad: 0.0,
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.back.write(&self.device, &self.queue, &scene.back);
@@ -681,23 +713,47 @@ impl Renderer {
         let mut images = scene.images.clone();
         images.sort_by_key(|(key, _)| *key);
         self.picture_runs.clear();
-        for (i, (key, _)) in images.iter().enumerate() {
-            match self.picture_runs.last_mut() {
-                Some((last, _, count)) if last == key => *count += 1,
-                _ => self.picture_runs.push((*key, i as u32, 1)),
-            }
-            if let Some(picture) = self.pictures.get_mut(key) {
-                picture.used = self.frame;
-            }
-        }
-        let sprites: Vec<Sprite> = images.into_iter().map(|(_, s)| s).collect();
+        let mut sprites = Vec::new();
+        self.runs(&scene.under, &mut sprites);
+        self.under_runs = self.picture_runs.len();
+        self.runs(&images, &mut sprites);
         self.pictures_buffer.write(&self.device, &self.queue, &sprites);
         let frame = self.frame;
         self.pictures.retain(|_, p| frame - p.used < 600);
     }
 
+    /// Groups images by key into draw calls, appending their sprites.
+    fn runs(&mut self, images: &[(u64, Sprite)], sprites: &mut Vec<Sprite>) {
+        let first = self.picture_runs.len();
+        for (key, sprite) in images {
+            match self.picture_runs[first..].last_mut() {
+                Some((last, _, count)) if last == key => *count += 1,
+                _ => self.picture_runs.push((*key, sprites.len() as u32, 1)),
+            }
+            sprites.push(*sprite);
+            if let Some(picture) = self.pictures.get_mut(key) {
+                picture.used = self.frame;
+            }
+        }
+    }
+
+    fn draw_pictures(&self, pass: &mut wgpu::RenderPass<'_>, runs: &[(u64, u32, u32)]) {
+        if runs.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.image_pipeline);
+        pass.set_vertex_buffer(0, self.pictures_buffer.buffer.slice(..));
+        for (key, start, count) in runs {
+            if let Some(picture) = self.pictures.get(key) {
+                pass.set_bind_group(1, &picture.bind_group, &[]);
+                pass.draw(0..4, *start..start + count);
+            }
+        }
+    }
+
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_bind_group(0, &self.bind_group, &[]);
+        self.draw_pictures(pass, &self.picture_runs[..self.under_runs]);
         let layers = [
             (&self.rect_pipeline, &self.back),
             (&self.mask_pipeline, &self.sprites),
@@ -706,16 +762,9 @@ impl Renderer {
             (&self.mask_pipeline, &self.over),
         ];
         for (i, (pipeline, instances)) in layers.into_iter().enumerate() {
-            if i == 1 && !self.picture_runs.is_empty() {
+            if i == 1 {
                 // Images sit on the cell backgrounds, under the text.
-                pass.set_pipeline(&self.image_pipeline);
-                pass.set_vertex_buffer(0, self.pictures_buffer.buffer.slice(..));
-                for (key, start, count) in &self.picture_runs {
-                    if let Some(picture) = self.pictures.get(key) {
-                        pass.set_bind_group(1, &picture.bind_group, &[]);
-                        pass.draw(0..4, *start..start + count);
-                    }
-                }
+                self.draw_pictures(pass, &self.picture_runs[self.under_runs..]);
             }
             if instances.len == 0 {
                 continue;
@@ -726,9 +775,45 @@ impl Renderer {
         }
     }
 
-    /// Prepares and draws the scene into `target` in one pass.
+    /// Shaders over the whole frame, each (name, GLSL source); none takes them away.
+    pub fn set_effects(&mut self, sources: &[(String, String)]) -> Result<(), String> {
+        self.effects = None;
+        if !sources.is_empty() {
+            self.effects = Some(Effects::new(&self.device, self.format, sources, self.gl)?);
+        }
+        Ok(())
+    }
+
+    /// Says the frames go to a window through GL.
+    pub fn set_gl(&mut self, gl: bool) {
+        self.gl = gl;
+    }
+
+    pub fn effects(&mut self) -> Option<&mut Effects> {
+        self.effects.as_mut()
+    }
+
+    /// Prepares and draws the scene into `target`, through the shaders when there are any.
     pub fn render(&mut self, target: &wgpu::TextureView, width: u32, height: u32, clear: wgpu::Color, scene: &Scene) {
-        self.prepare(scene, width, height);
+        let Some(mut effects) = self.effects.take() else {
+            return self.render_plain(target, width, height, clear, scene, false);
+        };
+        let input = effects.input(&self.device, width, height).clone();
+        self.render_plain(&input, width, height, clear, scene, true);
+        effects.run(&self.device, &self.queue, target);
+        self.effects = Some(effects);
+    }
+
+    fn render_plain(
+        &mut self,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        clear: wgpu::Color,
+        scene: &Scene,
+        flipped: bool,
+    ) {
+        self.prepare_flipped(scene, width, height, flipped);
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("vif frame"),
         });
@@ -754,7 +839,7 @@ impl Renderer {
     }
 }
 
-fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -767,7 +852,7 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,

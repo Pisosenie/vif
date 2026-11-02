@@ -29,15 +29,25 @@ impl Win {
                     key,
                     uri,
                     span: None,
+                    target: None,
                 });
             }
-            let (start, end, uri) = pane.url_at(col, line)?;
-            let key = format!("url:{line}:{start}");
+            if let Some((start, end, uri)) = pane.url_at(col, line) {
+                return Some(Link {
+                    pane: id,
+                    key: format!("url:{line}:{start}"),
+                    uri,
+                    span: Some((line, start, end)),
+                    target: None,
+                });
+            }
+            let (start, end, target) = pane.path_at(col, line)?;
             Some(Link {
                 pane: id,
-                key,
-                uri,
+                key: format!("path:{line}:{start}"),
+                uri: target.text.clone(),
                 span: Some((line, start, end)),
+                target: Some(target),
             })
         });
         if found == self.link {
@@ -90,16 +100,25 @@ impl Win {
         }
     }
 
-    pub(super) fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
+    pub(super) fn mouse_button(&mut self, state: ElementState, button: MouseButton, shared: &Shared) {
         let (x, y) = self.mouse;
         let m = self.renderer.metrics();
         let mods = self.mods.state();
         if state == ElementState::Pressed && button == MouseButton::Left {
+            if self.block_click(x, y, shared) {
+                return;
+            }
             if let Some(notice) = &self.notice
                 && notice.area.contains(x, y)
             {
                 self.notice = None;
                 self.window.request_redraw();
+                return;
+            }
+            if self.plus_hit.is_some_and(|a| a.contains(x, y)) {
+                if let Err(err) = self.new_tab(shared) {
+                    log::warn!("can't open a tab: {err}");
+                }
                 return;
             }
             if let Some((index, _)) = self.tab_hits.iter().find(|(_, a)| a.contains(x, y)) {
@@ -123,7 +142,19 @@ impl Win {
             && button == MouseButton::Left
             && let Some(link) = self.link.clone()
         {
-            let _ = open::that_detached(link.uri);
+            match link.target {
+                Some(target) => {
+                    let cwd = self
+                        .panes
+                        .get(&link.pane)
+                        .and_then(|p| p.last_location())
+                        .and_then(|p| p.cwd);
+                    self.open_target(target, cwd, shared);
+                }
+                None => {
+                    let _ = open::that_detached(link.uri);
+                }
+            }
             return;
         }
         let Some(pane) = self.panes.get_mut(&id) else {
@@ -139,6 +170,15 @@ impl Win {
                     if let Some(bytes) = input::mouse(button_code(button), col, line, true, mods, mode) {
                         pane.write(bytes);
                     }
+                    return;
+                }
+                if button == MouseButton::Left
+                    && let Some(fold) = pane.fold_at(line)
+                {
+                    pane.toggle_fold(fold);
+                    pane.invalidate();
+                    self.pressed = None;
+                    self.window.request_redraw();
                     return;
                 }
                 if button == MouseButton::Left {

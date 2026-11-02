@@ -16,6 +16,30 @@ pub struct FontConfig {
     pub line_height: f32,
     pub ligatures: bool,
     pub scale: f32,
+    pub faces: Faces,
+}
+
+/// The faces beyond the family: weights, other families for bold and italic, OpenType features.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Faces {
+    pub weight: u16,
+    pub bold_weight: u16,
+    pub bold_family: Option<String>,
+    pub italic_family: Option<String>,
+    /// Tags with their values, like ("ss01", 1) or ("calt", 0).
+    pub features: Vec<(String, u16)>,
+}
+
+impl Default for Faces {
+    fn default() -> Self {
+        Self {
+            weight: 400,
+            bold_weight: 700,
+            bold_family: None,
+            italic_family: None,
+            features: Vec::new(),
+        }
+    }
 }
 
 impl FontConfig {
@@ -128,6 +152,8 @@ pub(crate) struct Fonts {
     pub metrics: Metrics,
     pub px: f32,
     ligatures: bool,
+    /// What the shaper is told: the config's features, and ligatures off when they are.
+    features: Vec<(String, u16)>,
     fallback: HashMap<char, Option<u16>>,
     loaded: HashMap<(fontdb::ID, bool), u16>,
     index: Coverage,
@@ -139,45 +165,60 @@ pub(crate) struct Fonts {
 impl Fonts {
     pub fn new(config: &FontConfig) -> Self {
         let px = config.px();
+        let faces = &config.faces;
         let mut system = None;
         let bundled: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(BUNDLED);
-        let regular = if config.family.eq_ignore_ascii_case(BUNDLED_FAMILY) || config.family.is_empty() {
+        let ours = config.family.eq_ignore_ascii_case(BUNDLED_FAMILY) || config.family.is_empty();
+        let regular = if ours {
             None
         } else {
             let db = system.get_or_insert_with(load_system);
-            find(db, &config.family, false, false)
+            find(db, &config.family, faces.weight, false)
         };
         let regular = regular.unwrap_or_else(|| {
-            if !config.family.eq_ignore_ascii_case(BUNDLED_FAMILY) {
+            if !ours {
                 log::warn!("font “{}” not found, using {BUNDLED_FAMILY}", config.family);
             }
             Face::load(bundled.clone(), 0).expect("bundled font parses")
         });
         let variable = regular.has_weight_axis();
         let styled = |bold: bool, italic: bool, system: &mut Option<fontdb::Database>| {
-            if !variable && !config.family.eq_ignore_ascii_case(BUNDLED_FAMILY) {
+            let weight = if bold { faces.bold_weight } else { faces.weight };
+            let other = if italic {
+                faces.italic_family.as_ref()
+            } else if bold {
+                faces.bold_family.as_ref()
+            } else {
+                None
+            };
+            let families = other.into_iter().chain((!variable && !ours).then_some(&config.family));
+            for family in families {
                 let db = system.get_or_insert_with(load_system);
-                if let Some(face) = find(db, &config.family, bold, italic) {
+                if let Some(face) = find(db, family, weight, italic) {
                     return face;
                 }
             }
-            let weight = variable.then_some(if bold { 700.0 } else { 400.0 });
-            regular.styled(weight, bold && !variable, italic)
+            regular.styled(variable.then_some(f32::from(weight)), bold && !variable, italic)
         };
         let bold = styled(true, false, &mut system);
         let italic = styled(false, true, &mut system);
         let bold_italic = styled(true, true, &mut system);
         let regular = if variable {
-            regular.styled(Some(400.0), false, false)
+            regular.styled(Some(f32::from(faces.weight)), false, false)
         } else {
             regular
         };
+        let mut features = faces.features.clone();
+        if !config.ligatures && !features.is_empty() {
+            features.extend(["liga", "calt", "dlig"].map(|t| (t.to_owned(), 0)));
+        }
         let metrics = measure(&regular, px, config.line_height);
         Self {
             faces: vec![regular, bold, italic, bold_italic],
             metrics,
             px,
             ligatures: config.ligatures,
+            features,
             fallback: HashMap::new(),
             loaded: HashMap::new(),
             index: Coverage::default(),
@@ -266,7 +307,8 @@ impl Fonts {
             return hit.clone();
         }
         let text = &key.1;
-        let simple = !self.ligatures || text.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ');
+        let plain = text.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ');
+        let simple = self.features.is_empty() && (!self.ligatures || plain);
         let placed: Arc<[Placed]> = if simple {
             self.place_simple(style, cells).into()
         } else {
@@ -303,7 +345,12 @@ impl Fonts {
         let face = &self.faces[index as usize];
         let font = face.font();
         let weight = face.weight;
-        let mut builder = self.shaper.builder(font).script(Script::Latin).size(self.px);
+        let mut builder = self
+            .shaper
+            .builder(font)
+            .script(Script::Latin)
+            .size(self.px)
+            .features(self.features.iter().map(|(tag, v)| (tag.as_str(), *v)));
         if let Some(weight) = weight {
             builder = builder.variations(&[("wght", weight)][..]);
         }
@@ -445,14 +492,10 @@ fn load_system() -> fontdb::Database {
     db
 }
 
-fn find(db: &mut fontdb::Database, family: &str, bold: bool, italic: bool) -> Option<Face> {
+fn find(db: &mut fontdb::Database, family: &str, weight: u16, italic: bool) -> Option<Face> {
     let query = fontdb::Query {
         families: &[fontdb::Family::Name(family)],
-        weight: if bold {
-            fontdb::Weight::BOLD
-        } else {
-            fontdb::Weight::NORMAL
-        },
+        weight: fontdb::Weight(weight),
         stretch: fontdb::Stretch::Normal,
         style: if italic {
             fontdb::Style::Italic
@@ -465,11 +508,12 @@ fn find(db: &mut fontdb::Database, family: &str, bold: bool, italic: bool) -> Op
     if !info.families.iter().any(|(name, _)| name.eq_ignore_ascii_case(family)) {
         return None;
     }
-    let fake_bold = bold && info.weight.0 < 600;
     let fake_italic = italic && info.style == fontdb::Style::Normal;
-    let index = info.index;
+    let (found, index) = (info.weight.0, info.index);
     let face = Face::load(face_data(db, id)?, index)?;
-    Some(face.styled(None, fake_bold, fake_italic))
+    let variable = face.has_weight_axis();
+    let fake_bold = weight >= 600 && found < 600 && !variable;
+    Some(face.styled(variable.then_some(f32::from(weight)), fake_bold, fake_italic))
 }
 
 /// The face's file, mapped rather than read: Apple Color Emoji is 190 MB and a terminal touches a few pages of it.
@@ -524,6 +568,7 @@ mod tests {
             line_height: 1.2,
             ligatures: true,
             scale: 2.0,
+            faces: Faces::default(),
         });
         let mut scale = swash::scale::ScaleContext::new();
         for c in ['漢', 'か', '⣿', '🚀'] {

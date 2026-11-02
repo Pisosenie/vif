@@ -22,14 +22,21 @@ use crate::colors::{Scheme, mix};
 use crate::hints::{Kind, Target};
 use crate::input;
 use crate::layout::{Area, Direction, Node, PaneId, neighbor};
+use crate::layouts::{self, Saved, SavedTab, Shape};
 use crate::marks;
 use crate::pane::{Look, Pane, Spawn, term_config};
 
+mod blocks;
+mod footer;
 mod history;
+mod hud;
 mod keys;
+pub mod looks;
 mod mouse;
 mod overlays;
 mod palette;
+mod scrollbar;
+mod sessions;
 mod tabs;
 
 use tabs::{bar_shown, insets};
@@ -37,12 +44,12 @@ use tabs::{bar_shown, insets};
 const BLINK: Duration = Duration::from_millis(530);
 const NOTICE: Duration = Duration::from_secs(12);
 
+static WINDOWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct Shared {
     pub proxy: EventLoopProxy<UserEvent>,
     pub term: (String, Option<PathBuf>),
     pub command: Option<Vec<String>>,
-    /// Sessions for the first window to take over.
-    pub restore: std::cell::RefCell<Vec<String>>,
     /// Apolline's accent while it colors apps.
     pub outside: Option<vif_config::Rgb>,
 }
@@ -71,6 +78,8 @@ struct Link {
     uri: String,
     /// Line and first and last column of a plain URL; OSC 8 links are underlined by the pane.
     span: Option<(usize, usize, usize)>,
+    /// A path, opened the way hints open one.
+    target: Option<Target>,
 }
 
 struct Notice {
@@ -96,6 +105,7 @@ pub struct Win {
     panes: HashMap<PaneId, Pane>,
     areas: Vec<(PaneId, Area)>,
     tab_hits: Vec<(usize, Area)>,
+    plus_hit: Option<Area>,
     font_delta: f32,
     mods: Modifiers,
     mouse: (f32, f32),
@@ -116,6 +126,22 @@ pub struct Win {
     clipboard: Clipboard,
     shown: bool,
     doomed: Vec<PaneId>,
+    /// This window's number in this vif, naming its saved layout.
+    seq: u64,
+    /// The layout as last saved.
+    pub saved: Saved,
+    /// The drop-down quick terminal rather than an ordinary window.
+    pub quick: bool,
+    /// The background picture as uploaded: its key and size.
+    wallpaper: Option<(u64, (u32, u32))>,
+    block: Option<blocks::BlockMode>,
+    /// Running commands to tell about when they end, whatever `notify_after` says.
+    notify: std::collections::HashSet<(PaneId, u32)>,
+    /// A short word about something just done, and until when it shows.
+    toast: Option<(String, Instant)>,
+    ticks: HashMap<PaneId, scrollbar::Ticks>,
+    sessions: Option<sessions::Sessions>,
+    hud: Option<hud::Hud>,
 }
 
 pub fn attributes(config: &Config) -> WindowAttributes {
@@ -166,22 +192,39 @@ fn font_config(config: &Config, scale: f32, delta: f32) -> FontConfig {
         line_height: config.font.line_height,
         ligatures: config.font.ligatures,
         scale,
+        faces: vif_render::Faces {
+            weight: config.font.weight,
+            bold_weight: config.font.bold_weight,
+            bold_family: config.font.bold_family.clone(),
+            italic_family: config.font.italic_family.clone(),
+            features: config.font.feature_settings(),
+        },
     }
 }
 
 impl Win {
+    /// A window, taking over a saved window's sessions if given; `quick` makes it the drop-down.
     pub fn new(
         event_loop: &ActiveEventLoop,
         gpu: &mut Option<Gpu>,
         config: Arc<Config>,
         diagnostics: &[Diagnostic],
         shared: &Shared,
+        restore: Option<Saved>,
+        quick: bool,
     ) -> Result<Self, String> {
-        let window = Arc::new(
-            event_loop
-                .create_window(attributes(&config))
-                .map_err(|e| e.to_string())?,
-        );
+        let mut attrs = attributes(&config);
+        if quick {
+            attrs = attrs
+                .with_decorations(false)
+                .with_window_level(winit::window::WindowLevel::AlwaysOnTop);
+            #[cfg(target_os = "linux")]
+            {
+                use winit::platform::wayland::WindowAttributesExtWayland;
+                attrs = WindowAttributesExtWayland::with_name(attrs, "vif-quick", "vif-quick");
+            }
+        }
+        let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
         crate::app::mark("window");
         let scale = window.scale_factor() as f32;
         let (gpu, surface) = match gpu {
@@ -209,16 +252,32 @@ impl Win {
         .into_iter()
         .find(|m| caps.alpha_modes.contains(m))
         .unwrap_or(caps.alpha_modes[0]);
-        let renderer = Renderer::new(&gpu.device, &gpu.queue, format, font_config(&config, scale, 0.0));
+        let mut renderer = Renderer::new(&gpu.device, &gpu.queue, format, font_config(&config, scale, 0.0));
+        renderer.set_gl(gpu.adapter.get_info().backend == wgpu::Backend::Gl);
         crate::app::mark("renderer");
         let m = renderer.metrics();
         let (top, bottom) = insets(&config, scale, 1);
         let width = (f32::from(config.window.columns) * m.cell_width + 2.0 * pad(&config, scale).0).round();
         let height =
             (f32::from(config.window.lines) * m.cell_height + 2.0 * pad(&config, scale).1 + top + bottom).round();
-        let size = window
-            .request_inner_size(PhysicalSize::new(width as u32, height as u32))
-            .unwrap_or_else(|| window.inner_size());
+        let mut wanted = PhysicalSize::new(width as u32, height as u32);
+        if quick && let Some(screen) = window.current_monitor().or_else(|| event_loop.primary_monitor()) {
+            let size = screen.size();
+            wanted = PhysicalSize::new(size.width, (size.height as f32 * config.quick.height) as u32);
+            window.set_outer_position(screen.position());
+        }
+        // On Wayland the compositor places the quick terminal by its rules; asking for a size
+        // would override them.
+        let ask = !(quick && cfg!(target_os = "linux"));
+        let size = if ask {
+            window.request_inner_size(wanted).unwrap_or_else(|| window.inner_size())
+        } else {
+            window.inner_size()
+        };
+        #[cfg(target_os = "macos")]
+        if quick {
+            crate::quick::everywhere(&window);
+        }
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -255,6 +314,7 @@ impl Win {
             panes: HashMap::new(),
             areas: Vec::new(),
             tab_hits: Vec::new(),
+            plus_hit: None,
             font_delta: 0.0,
             mods: Modifiers::default(),
             mouse: (0.0, 0.0),
@@ -273,13 +333,24 @@ impl Win {
             clipboard,
             shown: false,
             doomed: Vec::new(),
+            seq: WINDOWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            saved: Saved {
+                quick,
+                ..Saved::default()
+            },
+            quick,
+            wallpaper: None,
+            block: None,
+            notify: std::collections::HashSet::new(),
+            toast: None,
+            ticks: HashMap::new(),
+            sessions: None,
+            hud: None,
         };
         win.set_notice(diagnostics);
-        let restore = std::mem::take(&mut *shared.restore.borrow_mut());
-        for session in restore {
-            if let Err(err) = win.attach_tab(shared, session) {
-                log::warn!("can't take a session back: {err}");
-            }
+        win.refresh_looks(shared);
+        if let Some(saved) = restore {
+            win.bring_back(shared, saved);
         }
         if win.tabs.is_empty() {
             win.new_tab(shared).map_err(|e| format!("can't start the shell: {e}"))?;
@@ -290,6 +361,10 @@ impl Win {
 
     fn scale(&self) -> f32 {
         self.window.scale_factor() as f32
+    }
+
+    pub fn has_focus(&self) -> bool {
+        self.focused
     }
 
     /// The theme's corner radius in pixels.
@@ -304,7 +379,7 @@ impl Win {
     fn content(&self) -> Area {
         let scale = self.scale();
         let (w, h) = self.size();
-        let (top, bottom) = insets(&self.config, scale, self.tabs.len().max(1));
+        let (top, bottom) = self.bands();
         let (px, py) = pad(&self.config, scale);
         Area {
             x: px,
@@ -322,10 +397,24 @@ impl Win {
         if let Some(tab) = self.tabs.get(self.active) {
             tab.root.layout(self.content(), gap, &mut all);
         }
+        // Panes in the other tabs take the size they will show at, so their programs see it
+        // and their lines stay where they are when the tab comes back.
+        let mut hidden = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if i != self.active {
+                tab.root.layout(self.content(), gap, &mut hidden);
+            }
+        }
+        for (id, area) in hidden {
+            if let Some(pane) = self.panes.get_mut(&id) {
+                pane.place(area, area, m);
+            }
+        }
         let content = self.content();
         let (w, h) = self.size();
-        let (inset, bottom) = insets(&self.config, self.scale(), self.tabs.len());
-        let bar_on_top = bar_shown(&self.config, self.tabs.len()) && self.config.tabs.position == TabPosition::Top;
+        let (inset, bottom) = self.bands();
+        let bar_on_top =
+            self.quick || (bar_shown(&self.config, self.tabs.len()) && self.config.tabs.position == TabPosition::Top);
         let top = if bar_on_top { inset } else { 0.0 };
         for (id, area) in &all {
             // Edge colors spread to the window's edges, never into a neighbouring pane.
@@ -352,7 +441,108 @@ impl Win {
             }
         }
         self.areas = all;
+        self.remember();
         self.window.request_redraw();
+    }
+
+    /// The sessions' layout, written down whenever it changes.
+    fn remember(&mut self) {
+        let mut tabs = Vec::new();
+        let mut active = 0;
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let Some(root) = self.shape(&tab.root) else {
+                continue;
+            };
+            if i <= self.active {
+                active = tabs.len();
+            }
+            let focus = match self.panes.get(&tab.focus).and_then(|p| p.session.clone()) {
+                Some(id) => id,
+                None => first_session(&root),
+            };
+            tabs.push(SavedTab { root, focus });
+        }
+        let saved = Saved {
+            tabs,
+            active,
+            quick: self.quick,
+        };
+        if saved != self.saved {
+            layouts::save(self.seq, &saved);
+            self.saved = saved;
+        }
+    }
+
+    fn shape(&self, node: &Node) -> Option<Shape> {
+        match node {
+            Node::Pane(id) => self.panes.get(id)?.session.clone().map(Shape::Pane),
+            Node::Split {
+                across,
+                ratio,
+                first,
+                second,
+            } => match (self.shape(first), self.shape(second)) {
+                (Some(first), Some(second)) => Some(Shape::Split {
+                    across: *across,
+                    ratio: (ratio * 100.0).round() / 100.0,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (one, other) => one.or(other),
+            },
+        }
+    }
+
+    /// Takes over a saved window's sessions, in its tabs and splits.
+    fn bring_back(&mut self, shared: &Shared, saved: Saved) {
+        for tab in saved.tabs {
+            let Some(root) = self.build(shared, tab.root) else {
+                continue;
+            };
+            let mut ids = Vec::new();
+            root.panes(&mut ids);
+            let focus = ids
+                .iter()
+                .copied()
+                .find(|id| self.panes.get(id).and_then(|p| p.session.as_deref()) == Some(tab.focus.as_str()))
+                .unwrap_or(ids[0]);
+            self.tabs.push(Tab {
+                root,
+                focus,
+                back: None,
+            });
+        }
+        self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        if !self.tabs.is_empty() {
+            self.relayout();
+            self.update_title();
+        }
+    }
+
+    fn build(&mut self, shared: &Shared, shape: Shape) -> Option<Node> {
+        match shape {
+            Shape::Pane(session) => match self.spawn_pane(shared, None, None, Some(session)) {
+                Ok(id) => Some(Node::Pane(id)),
+                Err(err) => {
+                    log::warn!("can't take a session back: {err}");
+                    None
+                }
+            },
+            Shape::Split {
+                across,
+                ratio,
+                first,
+                second,
+            } => match (self.build(shared, *first), self.build(shared, *second)) {
+                (Some(first), Some(second)) => Some(Node::Split {
+                    across,
+                    ratio,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (one, other) => one.or(other),
+            },
+        }
     }
 
     fn spawn_pane(
@@ -433,11 +623,25 @@ impl Win {
         self.relayout();
     }
 
-    /// Closes a pane; returns true when the window has nothing left.
+    /// Closes a pane, ending its shell; returns true when the window has nothing left.
     pub fn close_pane(&mut self, id: PaneId) -> bool {
+        self.remove_pane(id, true)
+    }
+
+    /// Takes a pane out of the window and leaves its session running; true when nothing is left.
+    pub(super) fn detach_pane(&mut self, id: PaneId) -> bool {
+        self.remove_pane(id, false)
+    }
+
+    fn remove_pane(&mut self, id: PaneId, end: bool) -> bool {
         if let Some(pane) = self.panes.remove(&id) {
-            pane.end();
+            if end {
+                pane.end();
+            } else {
+                pane.shutdown();
+            }
         }
+        self.forget_ticks(id);
         if let Some(index) = self.tabs.iter().position(|t| t.contains(id)) {
             let tab = &mut self.tabs[index];
             if tab.root.remove(id) {
@@ -460,6 +664,7 @@ impl Win {
             }
         }
         if self.tabs.is_empty() {
+            layouts::forget(self.seq);
             return true;
         }
         self.relayout();
@@ -504,7 +709,13 @@ impl Win {
         self.window.set_title(&title);
     }
 
-    pub fn apply(&mut self, config: Arc<Config>, diagnostics: &[Diagnostic], outside: Option<vif_config::Rgb>) {
+    pub fn apply(
+        &mut self,
+        config: Arc<Config>,
+        diagnostics: &[Diagnostic],
+        outside: Option<vif_config::Rgb>,
+        shared: &Shared,
+    ) {
         let scale = self.scale();
         self.scheme = Scheme {
             palette: config.palette_with(outside),
@@ -532,7 +743,35 @@ impl Win {
         self.renderer
             .set_font(font_config(&self.config, scale, self.font_delta));
         self.set_notice(diagnostics);
+        self.refresh_looks(shared);
         self.relayout();
+    }
+
+    /// Adds lines to the notice, or shows them in one.
+    fn tell(&mut self, lines: Vec<String>) {
+        if lines.is_empty() {
+            return;
+        }
+        let until = Instant::now() + NOTICE;
+        match &mut self.notice {
+            Some(notice) => {
+                notice.lines.extend(lines);
+                notice.until = until;
+            }
+            None => {
+                self.notice = Some(Notice {
+                    lines,
+                    until,
+                    area: Area {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 0.0,
+                        h: 0.0,
+                    },
+                });
+            }
+        }
+        self.window.request_redraw();
     }
 
     fn set_notice(&mut self, diagnostics: &[Diagnostic]) {
@@ -570,13 +809,16 @@ impl Win {
         let notice = self.notice.as_ref().map(|n| n.until);
         let second = self.second.filter(|_| self.ticking());
         let places = self.places.filter(|_| self.follows_places());
-        [blink, notice, second, places].into_iter().flatten().min()
+        let toast = self.toast.as_ref().map(|t| t.1);
+        [blink, notice, second, places, toast].into_iter().flatten().min()
     }
 
-    /// Rules or tab titles depend on where the panes are.
+    /// Rules or tabs depend on where the panes are and what runs in them.
     fn follows_places(&self) -> bool {
-        let title = &self.config.tabs.title;
-        !self.config.rules.is_empty() || title.contains("{cwd}") || title.contains("{dir}")
+        let tabs = &self.config.tabs;
+        let shown = bar_shown(&self.config, self.tabs.len());
+        let title = tabs.title.contains("{cwd}") || tabs.title.contains("{dir}");
+        !self.config.rules.is_empty() || (shown && (tabs.detail || title))
     }
 
     fn ticking(&self) -> bool {
@@ -592,6 +834,10 @@ impl Win {
         {
             self.cursor_on = !self.cursor_on;
             self.blink = Some(now + BLINK);
+            self.window.request_redraw();
+        }
+        if self.toast.as_ref().is_some_and(|t| now >= t.1) {
+            self.toast = None;
             self.window.request_redraw();
         }
         if self.notice.as_ref().is_some_and(|n| now >= n.until) {
@@ -653,18 +899,14 @@ impl Win {
                     output: crate::archive::trimmed(&pane.output(block).unwrap_or_default()),
                 });
             }
-            if after.is_zero() || seen || took < after || pane.replaying() {
+            let asked = self.notify.remove(&(id, block));
+            if !asked && (after.is_zero() || seen || took < after || pane.replaying()) {
                 continue;
             }
             let command = typed.map_or_else(|| "A command".to_owned(), |c| c.trim().to_owned());
-            let status = if exit == 0 {
-                "done".to_owned()
-            } else {
-                format!("exit {exit}")
-            };
             crate::notify::send(
                 &format!("{command} finished"),
-                &format!("{status} · {}", marks::clock(took)),
+                &format!("exit {exit} · {}", marks::spoken(took)),
             );
             self.window
                 .request_user_attention(Some(UserAttentionType::Informational));
@@ -813,6 +1055,10 @@ impl Win {
                     self.preedit.clear();
                     self.history_type(&text);
                 }
+                Ime::Commit(text) if self.sessions.is_some() => {
+                    self.preedit.clear();
+                    self.sessions_type(&text);
+                }
                 Ime::Commit(text) => {
                     self.preedit.clear();
                     let id = self.tabs.get(self.active).map(|t| t.focus);
@@ -834,7 +1080,7 @@ impl Win {
                     self.invalidate_all();
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
+            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button, shared),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             WindowEvent::RedrawRequested => {
                 self.redraw();
@@ -891,7 +1137,9 @@ impl Win {
         };
         let mut scene = std::mem::take(&mut self.scene);
         scene.clear();
+        self.draw_wallpaper(&mut scene);
         self.compose(&mut scene);
+        self.feed_effects();
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bg = self.scheme.bg();
         let a = f64::from(self.scheme.opacity);
@@ -910,7 +1158,11 @@ impl Win {
         );
         self.window.pre_present_notify();
         frame.present();
+        self.hud_presented();
         self.scene = scene;
+        if self.effects_playing() {
+            self.window.request_redraw();
+        }
         if !self.shown {
             self.shown = true;
             self.window.set_visible(true);
@@ -975,6 +1227,7 @@ impl Win {
             if let Some(Link {
                 pane: owner,
                 span: Some((line, start, end)),
+                target,
                 ..
             }) = &self.link
                 && *owner == id
@@ -982,7 +1235,11 @@ impl Win {
                 let x = area.x + *start as f32 * m.cell_width;
                 let y = area.y + *line as f32 * m.cell_height + m.underline;
                 let w = (*end - *start + 1) as f32 * m.cell_width;
-                scene.front.push(Rect::fill(x, y, w, m.stroke, scheme.accent()));
+                let under = Rect::fill(x, y, w, m.stroke, scheme.accent());
+                scene.front.push(match target {
+                    Some(_) => under.kind(vif_render::RECT_DOTTED, m.stroke.max(1.0)),
+                    None => under,
+                });
             }
             if split && Some(id) != focus && self.config.panes.dim > 0.0 {
                 let mut dim = scheme.bg();
@@ -1013,11 +1270,17 @@ impl Win {
         }
         self.draw_tabs(scene);
         self.draw_preedit(scene);
+        self.draw_scrollbars(scene);
         self.draw_search(scene);
+        self.draw_block(scene);
         self.draw_hints(scene);
+        self.draw_link_tip(scene);
         self.draw_palette(scene);
+        self.draw_sessions(scene);
         self.draw_history(scene);
         self.draw_notice(scene);
+        self.draw_toast(scene);
+        self.draw_hud(scene);
     }
 }
 
@@ -1060,4 +1323,11 @@ fn pad(config: &Config, scale: f32) -> (f32, f32) {
         (f32::from(config.window.padding[0]) * scale).round(),
         (f32::from(config.window.padding[1]) * scale).round(),
     )
+}
+
+fn first_session(shape: &Shape) -> String {
+    match shape {
+        Shape::Pane(id) => id.clone(),
+        Shape::Split { first, .. } => first_session(first),
+    }
 }

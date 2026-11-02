@@ -10,6 +10,8 @@ use vif_config::Rule;
 pub struct Place {
     pub cwd: Option<PathBuf>,
     pub host: Option<String>,
+    /// What runs in front when it isn't the shell, as typed.
+    pub running: Option<String>,
 }
 
 impl Place {
@@ -17,6 +19,13 @@ impl Place {
         Self {
             cwd,
             host: front.as_deref().and_then(ssh_host),
+            running: front.filter(|argv| !crate::process::is_shell(argv)).map(|argv| {
+                let name = argv[0].rsplit('/').next().unwrap_or(&argv[0]).to_owned();
+                std::iter::once(name)
+                    .chain(argv[1..].iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
         }
     }
 }
@@ -157,11 +166,12 @@ mod tests {
         let place = Place {
             cwd: Some(PathBuf::from("/srv/app")),
             host: Some("prod-db".to_owned()),
+            ..Place::default()
         };
         assert_eq!(pick(&rules, &place), Some(0));
         let local = Place {
             cwd: Some(PathBuf::from("/srv/app")),
-            host: None,
+            ..Place::default()
         };
         assert_eq!(pick(&rules, &local), Some(1));
         assert_eq!(pick(&rules, &Place::default()), None);
