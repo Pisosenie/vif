@@ -12,8 +12,7 @@ use winit::event_loop::EventLoopProxy;
 use crate::app::UserEvent;
 
 fn socket() -> PathBuf {
-    let dir = crate::session::dir();
-    dir.parent().map_or(dir.clone(), PathBuf::from).join("vif.sock")
+    crate::private::runtime().join("vif.sock")
 }
 
 /// Asks a running vif to show or hide its quick terminal; false when none answers.
@@ -30,10 +29,11 @@ pub fn listen(proxy: EventLoopProxy<UserEvent>) -> bool {
     if UnixStream::connect(&path).is_ok() {
         return false;
     }
-    let _ = fs::remove_file(&path);
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
+    if let Err(err) = crate::private::runtime_made() {
+        log::warn!("no quick terminal socket: {err}");
+        return false;
     }
+    let _ = fs::remove_file(&path);
     let Ok(listener) = UnixListener::bind(&path) else {
         return false;
     };
@@ -100,6 +100,7 @@ pub fn everywhere(window: &winit::window::Window) {
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return;
     };
+    // SAFETY: winit's AppKit handle points at the window's NSView, alive while the window is.
     let view: &NSView = unsafe { handle.ns_view.cast().as_ref() };
     if let Some(ns_window) = view.window() {
         ns_window.setCollectionBehavior(

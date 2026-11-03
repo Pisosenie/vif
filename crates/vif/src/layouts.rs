@@ -83,7 +83,7 @@ pub fn save(window: u64, saved: &Saved) {
         return;
     };
     let fresh = path.with_extension("new");
-    if fs::create_dir_all(session::dir()).is_ok() && fs::write(&fresh, text).is_ok() {
+    if crate::private::made("vif-sessions").is_ok() && fs::write(&fresh, text).is_ok() {
         let _ = fs::rename(&fresh, &path);
     }
 }
@@ -93,6 +93,7 @@ pub fn forget(window: u64) {
 }
 
 fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 sends nothing; it only asks whether the process is there.
     pid > 0 && unsafe { libc::kill(pid, 0) } == 0
 }
 

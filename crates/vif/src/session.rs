@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::PathBuf;
@@ -36,11 +36,7 @@ pub struct Spec {
 }
 
 pub fn dir() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join(format!("vif-{}", unsafe { libc::getuid() })));
-    base.join("vif-sessions")
+    crate::private::runtime().join("vif-sessions")
 }
 
 fn socket(id: &str, kind: &str) -> PathBuf {
@@ -49,8 +45,7 @@ fn socket(id: &str, kind: &str) -> PathBuf {
 
 /// Starts a host for a new shell; returns its id once it listens.
 pub fn start(spec: &Spec) -> io::Result<String> {
-    fs::create_dir_all(dir())?;
-    fs::set_permissions(dir(), fs::Permissions::from_mode(0o700))?;
+    crate::private::made("vif-sessions")?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let id = format!("{:x}", (nanos as u64) ^ (u64::from(std::process::id()) << 40));
     let spec = serde_json::to_string(spec).map_err(io::Error::other)?;
@@ -61,6 +56,7 @@ pub fn start(spec: &Spec) -> io::Result<String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // Its own session, so closing vif sends it no hangup.
+    // SAFETY: setsid is async-signal-safe, which is all that may run between fork and exec.
     unsafe {
         command.pre_exec(|| {
             libc::setsid();
@@ -278,6 +274,7 @@ impl Link {
     /// The sockets must outlive their registration, as with alacritty's own PTY.
     pub unsafe fn register(&mut self, poll: &Arc<Poller>, mut interest: Event, mode: PollMode) -> io::Result<()> {
         interest.key = READ_WRITE;
+        // SAFETY: both sources live in self, which the caller keeps registered no longer than it lives.
         unsafe {
             poll.add_with_mode(&self.data, interest, mode)?;
             poll.add_with_mode(&self.ctl, Event::readable(CHILD), PollMode::Level)
@@ -333,7 +330,9 @@ struct State {
     /// The window that has the session now, by its turn number.
     client: Option<(u64, UnixStream)>,
     turns: u64,
-    controls: Vec<UnixStream>,
+    /// Control connections open now, by number, to tell when the shell ends.
+    controls: Vec<(u64, UnixStream)>,
+    connections: u64,
     /// When the last window let go of it, in seconds since 1970.
     since: u64,
 }
@@ -353,8 +352,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let (Some(id), Some(spec)) = (args.first(), args.get(1)) else {
         return Err(io::Error::other("usage: vif session-host ID SPEC"));
     };
-    fs::create_dir_all(dir())?;
-    fs::set_permissions(dir(), fs::Permissions::from_mode(0o700))?;
+    crate::private::made("vif-sessions")?;
     let spec: Spec = serde_json::from_str(spec).map_err(io::Error::other)?;
     let (cols, lines, cell_width, cell_height) = spec.size;
     let options = Options {
@@ -374,6 +372,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let mut master = pty.file().try_clone()?;
     let input = pty.file().try_clone()?;
     // This host reads with blocking calls on threads of its own.
+    // SAFETY: fcntl on an fd we own, its flags read before one is cleared.
     unsafe {
         let fd = master.as_raw_fd();
         libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) & !libc::O_NONBLOCK);
@@ -435,9 +434,15 @@ fn serve(args: &[String]) -> io::Result<i32> {
             if stream.write_all(hello.as_bytes()).is_err() {
                 continue;
             }
-            if let Ok(copy) = stream.try_clone() {
-                shared.lock().expect("state").controls.push(copy);
-            }
+            let number = {
+                let mut s = shared.lock().expect("state");
+                s.connections += 1;
+                let number = s.connections;
+                if let Ok(copy) = stream.try_clone() {
+                    s.controls.push((number, copy));
+                }
+                number
+            };
             let (sizes, ring) = (sizes.clone(), shared.clone());
             let Ok(mut reply) = stream.try_clone() else {
                 continue;
@@ -458,6 +463,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                             cell_height: ch,
                         });
                     } else if line == "kill" {
+                        // SAFETY: kill only sends a signal, to the shell this host started.
                         unsafe { libc::kill(pid as i32, libc::SIGHUP) };
                     } else if let Some(n) = line.strip_prefix("peek ").and_then(|n| n.parse::<usize>().ok()) {
                         let tail: Vec<u8> = {
@@ -474,6 +480,8 @@ fn serve(args: &[String]) -> io::Result<i32> {
                         }
                     }
                 }
+                // A window asks and goes many times; each one gone lets go of its socket.
+                ring.lock().expect("state").controls.retain(|(n, _)| *n != number);
             });
         }
     });
@@ -495,6 +503,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
         }
     }
     let mut status = 0;
+    // SAFETY: status is ours, and pid is our own child.
     unsafe { libc::waitpid(pid as i32, &mut status, 0) };
     let code = if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
@@ -505,17 +514,26 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let _ = fs::remove_file(&data_path);
     let _ = fs::remove_file(dir().join(format!("{id}.name")));
     let mut s = state.lock().expect("state");
-    for control in &mut s.controls {
+    for (_, control) in &mut s.controls {
         let _ = control.write_all(format!("exit {code}\n").as_bytes());
     }
     Ok(code)
 }
 
+/// The terminal's own end of `master`, asked in a way that's safe from any thread: ptsname
+/// shares one buffer between all of them, and the host runs several.
 fn slave_name(master: &File) -> Option<PathBuf> {
-    let name = unsafe { libc::ptsname(master.as_raw_fd()) };
-    if name.is_null() {
+    let mut buf = [0 as libc::c_char; 128];
+    #[cfg(target_os = "linux")]
+    // SAFETY: the buffer is ours and its length is passed with it.
+    let ok = unsafe { libc::ptsname_r(master.as_raw_fd(), buf.as_mut_ptr(), buf.len()) } == 0;
+    #[cfg(target_os = "macos")]
+    // SAFETY: TIOCPTYGNAME writes at most 128 bytes, the buffer's size, ending in a nul.
+    let ok = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCPTYGNAME as _, buf.as_mut_ptr()) } == 0;
+    if !ok {
         return None;
     }
-    let name = unsafe { std::ffi::CStr::from_ptr(name) };
+    // SAFETY: both calls leave a nul-terminated string in the buffer when they succeed.
+    let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
     Some(PathBuf::from(name.to_string_lossy().into_owned()))
 }
