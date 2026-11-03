@@ -1,0 +1,16 @@
+name: An idea
+description: Something vif should do, or do differently
+labels: [idea]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want to do
+      description: The thing you are trying to get done, more than how vif should do it
+    validations:
+      required: true
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: Elsewhere
+      description: Another terminal that does it, and how

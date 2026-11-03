@@ -1,0 +1,37 @@
+name: Something is wrong
+description: vif crashes, draws something wrong, or doesn't do what it says
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. A screenshot helps when it's on screen.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: vif --version
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS and version, and on Linux the compositor or desktop (niri, sway, Hyprland, GNOME, KDE…)
+      placeholder: Arch Linux, niri 26.04
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: vif.toml
+      description: The parts that matter, or all of it
+      render: toml
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: For a crash or a hang, the end of `RUST_LOG=debug vif 2> vif.log`
+      render: text
