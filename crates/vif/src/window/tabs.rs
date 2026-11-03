@@ -138,6 +138,11 @@ impl Win {
             (None, Some(cwd)) if !format.contains("{cwd}") => crate::tilde(cwd),
             _ => String::new(),
         };
+        let detail = match (self.tabs[index].zoomed, detail.is_empty()) {
+            (false, _) => detail,
+            (true, true) => "zoomed".to_owned(),
+            (true, false) => format!("zoomed · {detail}"),
+        };
         let scheme = self.scheme;
         let dot = if place.running.is_some() {
             Some(crate::colors::rgba(scheme.palette.ansi[2], 1.0))

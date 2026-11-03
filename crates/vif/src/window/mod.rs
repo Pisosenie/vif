@@ -21,7 +21,7 @@ use crate::clipboard::Clipboard;
 use crate::colors::{Scheme, mix};
 use crate::hints::{Kind, Target};
 use crate::input;
-use crate::layout::{Area, Direction, Node, PaneId, neighbor};
+use crate::layout::{Area, Direction, Node, PaneId, Seam, neighbor};
 use crate::layouts::{self, Saved, SavedTab, Shape};
 use crate::marks;
 use crate::pane::{Look, Pane, Spawn, term_config};
@@ -60,6 +60,8 @@ struct Tab {
     focus: PaneId,
     /// The pane this tab was opened from, focused again when it closes.
     back: Option<PaneId>,
+    /// The focused pane takes the whole tab, the others wait behind it.
+    zoomed: bool,
 }
 
 impl Tab {
@@ -111,6 +113,9 @@ pub struct Win {
     mods: Modifiers,
     mouse: (f32, f32),
     pressed: Option<(PaneId, MouseButton)>,
+    /// A divider the mouse is dragging, in the tab in front.
+    dragging: Option<Seam>,
+    on_divider: bool,
     clicks: (Instant, u8, (f32, f32)),
     focused: bool,
     blink: Option<Instant>,
@@ -319,6 +324,8 @@ impl Win {
             mods: Modifiers::default(),
             mouse: (0.0, 0.0),
             pressed: None,
+            dragging: None,
+            on_divider: false,
             clicks: (Instant::now(), 0, (0.0, 0.0)),
             focused: true,
             blink: None,
@@ -389,20 +396,29 @@ impl Win {
         }
     }
 
+    /// Pixels between split panes.
+    fn gap(&self) -> f32 {
+        let m = self.renderer.metrics();
+        pad(&self.config, self.scale()).0.max(m.cell_width / 2.0).round()
+    }
+
     fn relayout(&mut self) {
         let m = self.renderer.metrics();
-        let gap = pad(&self.config, self.scale()).0.max(m.cell_width / 2.0).round();
+        let gap = self.gap();
         self.areas.clear();
         let mut all = Vec::new();
-        if let Some(tab) = self.tabs.get(self.active) {
-            tab.root.layout(self.content(), gap, &mut all);
-        }
         // Panes in the other tabs take the size they will show at, so their programs see it
         // and their lines stay where they are when the tab comes back.
         let mut hidden = Vec::new();
         for (i, tab) in self.tabs.iter().enumerate() {
             if i != self.active {
                 tab.root.layout(self.content(), gap, &mut hidden);
+            } else if tab.zoomed {
+                tab.root.layout(self.content(), gap, &mut hidden);
+                hidden.retain(|(id, _)| *id != tab.focus);
+                all.push((tab.focus, self.content()));
+            } else {
+                tab.root.layout(self.content(), gap, &mut all);
             }
         }
         for (id, area) in hidden {
@@ -510,6 +526,7 @@ impl Win {
                 root,
                 focus,
                 back: None,
+                zoomed: false,
             });
         }
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
@@ -583,6 +600,7 @@ impl Win {
             root: Node::Pane(id),
             focus: id,
             back: None,
+            zoomed: false,
         });
         self.active = self.tabs.len() - 1;
         self.relayout();
@@ -604,6 +622,7 @@ impl Win {
                 root: Node::Pane(id),
                 focus: id,
                 back,
+                zoomed: false,
             },
         );
         self.active = at;
@@ -621,6 +640,7 @@ impl Win {
         let tab = &mut self.tabs[self.active];
         tab.root.split(focus, id, across);
         tab.focus = id;
+        tab.zoomed = false;
         self.relayout();
     }
 
@@ -647,6 +667,7 @@ impl Win {
             let tab = &mut self.tabs[index];
             if tab.root.remove(id) {
                 if tab.focus == id {
+                    tab.zoomed = false;
                     let mut ids = Vec::new();
                     tab.root.panes(&mut ids);
                     tab.focus = ids[0];
@@ -689,6 +710,7 @@ impl Win {
         {
             let old = tab.focus;
             tab.focus = id;
+            let unzoomed = std::mem::take(&mut tab.zoomed);
             for (pane, on) in [(old, false), (id, true)] {
                 if let Some(pane) = self.panes.get_mut(&pane) {
                     if pane.mode().contains(TermMode::FOCUS_IN_OUT) {
@@ -696,6 +718,9 @@ impl Win {
                     }
                     pane.invalidate();
                 }
+            }
+            if unzoomed {
+                self.relayout();
             }
             self.update_title();
             self.window.request_redraw();

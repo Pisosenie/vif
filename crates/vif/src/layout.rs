@@ -59,34 +59,93 @@ impl Node {
                 first,
                 second,
             } => {
-                if *across {
-                    let w = ((area.w - gap) * ratio).round();
-                    first.layout(Area { w, ..area }, gap, out);
-                    let x = area.x + w + gap;
-                    second.layout(
-                        Area {
-                            x,
-                            w: area.x + area.w - x,
-                            ..area
-                        },
-                        gap,
-                        out,
-                    );
-                } else {
-                    let h = ((area.h - gap) * ratio).round();
-                    first.layout(Area { h, ..area }, gap, out);
-                    let y = area.y + h + gap;
-                    second.layout(
-                        Area {
-                            y,
-                            h: area.y + area.h - y,
-                            ..area
-                        },
-                        gap,
-                        out,
-                    );
-                }
+                let (one, _, two) = parts(area, gap, *across, *ratio);
+                first.layout(one, gap, out);
+                second.layout(two, gap, out);
             }
+        }
+    }
+
+    fn has(&self, target: PaneId) -> bool {
+        match self {
+            Node::Pane(id) => *id == target,
+            Node::Split { first, second, .. } => first.has(target) || second.has(target),
+        }
+    }
+
+    /// Moves the divider closest to `target` that lies across `direction` by `step` of the
+    /// split it parts; false when no divider lies that way.
+    pub fn resize(&mut self, target: PaneId, direction: Direction, step: f32) -> bool {
+        let across = matches!(direction, Direction::Left | Direction::Right);
+        let delta = if matches!(direction, Direction::Right | Direction::Down) {
+            step
+        } else {
+            -step
+        };
+        self.nudge(target, across, delta)
+    }
+
+    fn nudge(&mut self, target: PaneId, axis: bool, delta: f32) -> bool {
+        let Node::Split {
+            across,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return false;
+        };
+        let inner = if first.has(target) {
+            first.nudge(target, axis, delta)
+        } else if second.has(target) {
+            second.nudge(target, axis, delta)
+        } else {
+            return false;
+        };
+        if inner || *across != axis {
+            return inner;
+        }
+        *ratio = clamp_ratio(*ratio + delta);
+        true
+    }
+
+    /// Every divider inside `area`, for the mouse to take hold of.
+    pub fn dividers(&self, area: Area, gap: f32, path: &mut Vec<bool>, out: &mut Vec<Seam>) {
+        if let Node::Split {
+            across,
+            ratio,
+            first,
+            second,
+        } = self
+        {
+            let (one, line, two) = parts(area, gap, *across, *ratio);
+            out.push(Seam {
+                path: path.clone(),
+                across: *across,
+                line,
+                whole: area,
+            });
+            path.push(false);
+            first.dividers(one, gap, path, out);
+            path.pop();
+            path.push(true);
+            second.dividers(two, gap, path, out);
+            path.pop();
+        }
+    }
+
+    /// Sets the ratio of the split `path` leads to, false taking the first side at each step.
+    pub fn set_ratio(&mut self, path: &[bool], to: f32) {
+        let Node::Split {
+            ratio, first, second, ..
+        } = self
+        else {
+            return;
+        };
+        match path.split_first() {
+            None => *ratio = clamp_ratio(to),
+            Some((false, rest)) => first.set_ratio(rest, to),
+            Some((true, rest)) => second.set_ratio(rest, to),
         }
     }
 
@@ -132,6 +191,69 @@ impl Node {
                 }
             }
         }
+    }
+}
+
+/// The space between a split's two sides.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seam {
+    pub path: Vec<bool>,
+    pub across: bool,
+    pub line: Area,
+    /// What the split parts, so a drag knows what share the pointer stands for.
+    pub whole: Area,
+}
+
+impl Seam {
+    /// The ratio that puts the divider under the pointer.
+    pub fn ratio_at(&self, x: f32, y: f32, gap: f32) -> f32 {
+        let (at, from, length) = if self.across {
+            (x, self.whole.x, self.whole.w)
+        } else {
+            (y, self.whole.y, self.whole.h)
+        };
+        clamp_ratio((at - from - gap / 2.0) / (length - gap).max(1.0))
+    }
+}
+
+fn clamp_ratio(ratio: f32) -> f32 {
+    ratio.clamp(0.1, 0.9)
+}
+
+/// The first side, the gap and the second side of `area` split at `ratio`.
+fn parts(area: Area, gap: f32, across: bool, ratio: f32) -> (Area, Area, Area) {
+    if across {
+        let w = ((area.w - gap) * ratio).round();
+        let x = area.x + w + gap;
+        (
+            Area { w, ..area },
+            Area {
+                x: area.x + w,
+                w: gap,
+                ..area
+            },
+            Area {
+                x,
+                w: area.x + area.w - x,
+                ..area
+            },
+        )
+    } else {
+        let h = ((area.h - gap) * ratio).round();
+        let y = area.y + h + gap;
+        (
+            Area { h, ..area },
+            Area {
+                y: area.y + h,
+                h: gap,
+                ..area
+            },
+            Area {
+                y,
+                h: area.y + area.h - y,
+                ..area
+            },
+        )
     }
 }
 
@@ -187,5 +309,42 @@ mod tests {
         assert_eq!(ids, vec![1, 3]);
         assert!(root.remove(3));
         assert!(!root.remove(1));
+    }
+
+    #[test]
+    fn dividers_move_by_keys_and_by_the_pointer() {
+        let area = Area {
+            x: 0.0,
+            y: 0.0,
+            w: 101.0,
+            h: 51.0,
+        };
+        let mut root = Node::Pane(1);
+        root.split(1, 2, true);
+        root.split(2, 3, false);
+        // The pane below moves the divider between 2 and 3, the one on the left the outer one.
+        assert!(root.resize(3, Direction::Up, 0.1));
+        assert!(root.resize(1, Direction::Right, 0.1));
+        assert!(!root.resize(1, Direction::Down, 0.1));
+        let Node::Split { ratio, second, .. } = &root else {
+            unreachable!()
+        };
+        assert!((ratio - 0.6).abs() < 1e-6);
+        assert!(matches!(**second, Node::Split { ratio, .. } if (ratio - 0.4).abs() < 1e-6));
+
+        let mut out = Vec::new();
+        root.dividers(area, 1.0, &mut Vec::new(), &mut out);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].across && out[0].line.x == 60.0 && out[0].line.w == 1.0);
+        assert_eq!(out[1].path, vec![true]);
+        root.set_ratio(&out[0].path, out[0].ratio_at(25.5, 10.0, 1.0));
+        let mut panes = Vec::new();
+        root.layout(area, 1.0, &mut panes);
+        assert_eq!(panes[0].1.w, 25.0);
+        root.set_ratio(&[], 2.0);
+        let Node::Split { ratio, .. } = &root else {
+            unreachable!()
+        };
+        assert_eq!(*ratio, 0.9);
     }
 }

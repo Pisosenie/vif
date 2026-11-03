@@ -8,6 +8,43 @@ impl Win {
         self.areas.iter().find(|(_, a)| a.contains(x, y)).map(|(id, _)| *id)
     }
 
+    /// The divider of the tab in front under the pointer, with a few pixels' grace either side.
+    fn divider_at(&self, x: f32, y: f32) -> Option<Seam> {
+        let tab = self.tabs.get(self.active).filter(|t| !t.zoomed)?;
+        let mut dividers = Vec::new();
+        tab.root
+            .dividers(self.content(), self.gap(), &mut Vec::new(), &mut dividers);
+        let grace = 3.0 * self.scale();
+        dividers.into_iter().rev().find(|d| {
+            let a = d.line;
+            if d.across {
+                x >= a.x - grace && x < a.x + a.w + grace && y >= a.y && y < a.y + a.h
+            } else {
+                y >= a.y - grace && y < a.y + a.h + grace && x >= a.x && x < a.x + a.w
+            }
+        })
+    }
+
+    /// A resize arrow over a divider, and the text cursor back when the pointer leaves it.
+    fn divider_cursor(&mut self) {
+        let (x, y) = self.mouse;
+        let over = self.dragging.clone().or_else(|| self.divider_at(x, y));
+        match &over {
+            Some(d) => self.window.set_cursor(if d.across {
+                CursorIcon::ColResize
+            } else {
+                CursorIcon::RowResize
+            }),
+            None if self.on_divider => self.window.set_cursor(if self.link.is_some() {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::Text
+            }),
+            None => {}
+        }
+        self.on_divider = over.is_some();
+    }
+
     pub(super) fn link_modifier(&self) -> bool {
         let s = self.mods.state();
         if cfg!(target_os = "macos") {
@@ -71,8 +108,17 @@ impl Win {
     pub(super) fn mouse_moved(&mut self, position: PhysicalPosition<f64>) {
         self.mouse = (position.x as f32, position.y as f32);
         self.window.set_cursor_visible(true);
-        self.hover();
         let (x, y) = self.mouse;
+        if let Some(divider) = &self.dragging {
+            let ratio = divider.ratio_at(x, y, self.gap());
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.root.set_ratio(&divider.path, ratio);
+            }
+            self.relayout();
+            return;
+        }
+        self.hover();
+        self.divider_cursor();
         let m = self.renderer.metrics();
         let mods = self.mods.state();
         if let Some((id, button)) = self.pressed
@@ -131,6 +177,14 @@ impl Win {
                 let _ = self.window.drag_window();
                 return;
             }
+            if let Some(divider) = self.divider_at(x, y) {
+                self.dragging = Some(divider);
+                return;
+            }
+        }
+        if state == ElementState::Released && button == MouseButton::Left && self.dragging.take().is_some() {
+            self.divider_cursor();
+            return;
         }
         let Some(id) = self.pressed.map(|p| p.0).or_else(|| self.pane_at(x, y)) else {
             return;

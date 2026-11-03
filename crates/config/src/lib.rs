@@ -1,3 +1,5 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
+
 mod diagnostic;
 mod edit;
 pub mod import;
@@ -13,7 +15,7 @@ pub use edit::Editor;
 pub use read::known;
 pub use theme::{Palette, Rgb};
 
-pub const ACTIONS: [&str; 42] = [
+pub const ACTIONS: [&str; 47] = [
     "copy",
     "paste",
     "search",
@@ -31,6 +33,11 @@ pub const ACTIONS: [&str; 42] = [
     "close",
     "split_right",
     "split_down",
+    "zoom",
+    "resize_left",
+    "resize_right",
+    "resize_up",
+    "resize_down",
     "focus_next",
     "focus_previous",
     "focus_left",
@@ -596,6 +603,11 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("cmd+w", "close"),
             ("cmd+d", "split_right"),
             ("cmd+shift+d", "split_down"),
+            ("cmd+shift+enter", "zoom"),
+            ("cmd+ctrl+left", "resize_left"),
+            ("cmd+ctrl+right", "resize_right"),
+            ("cmd+ctrl+up", "resize_up"),
+            ("cmd+ctrl+down", "resize_down"),
             ("cmd+]", "focus_next"),
             ("cmd+[", "focus_previous"),
             ("cmd+alt+left", "focus_left"),
@@ -639,6 +651,11 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("ctrl+shift+w", "close"),
             ("ctrl+shift+d", "split_right"),
             ("ctrl+shift+e", "split_down"),
+            ("ctrl+shift+z", "zoom"),
+            ("alt+ctrl+shift+left", "resize_left"),
+            ("alt+ctrl+shift+right", "resize_right"),
+            ("alt+ctrl+shift+up", "resize_up"),
+            ("alt+ctrl+shift+down", "resize_down"),
             ("ctrl+shift+]", "focus_next"),
             ("ctrl+shift+[", "focus_previous"),
             ("ctrl+alt+left", "focus_left"),

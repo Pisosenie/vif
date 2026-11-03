@@ -259,6 +259,29 @@ impl Win {
                 }
             }
             "split_right" => self.split(shared, true),
+            "zoom" => {
+                if let Some(tab) = self.tabs.get_mut(self.active)
+                    && !matches!(tab.root, Node::Pane(_))
+                {
+                    tab.zoomed = !tab.zoomed;
+                    self.relayout();
+                    self.update_title();
+                }
+            }
+            "resize_left" | "resize_right" | "resize_up" | "resize_down" => {
+                let direction = match action {
+                    "resize_left" => Direction::Left,
+                    "resize_right" => Direction::Right,
+                    "resize_up" => Direction::Up,
+                    _ => Direction::Down,
+                };
+                if let Some(tab) = self.tabs.get_mut(self.active)
+                    && !tab.zoomed
+                    && tab.root.resize(tab.focus, direction, 0.05)
+                {
+                    self.relayout();
+                }
+            }
             "split_down" => self.split(shared, false),
             "focus_next" | "focus_previous" => {
                 if let Some(tab) = self.tabs.get(self.active) {
