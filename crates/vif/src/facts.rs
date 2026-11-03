@@ -34,15 +34,18 @@ pub fn gather() -> Vec<(&'static str, String)> {
 /// `user@host`.
 pub fn who() -> String {
     let user = std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| {
+        // SAFETY: vif greet runs on one thread, so nothing overwrites the entry getpwuid shares before it's read.
         let entry = unsafe { libc::getpwuid(libc::getuid()) };
         if entry.is_null() {
             return String::new();
         }
+        // SAFETY: the entry isn't null, and pw_name in it is a nul-terminated string.
         unsafe { CStr::from_ptr((*entry).pw_name) }
             .to_string_lossy()
             .into_owned()
     });
     let mut buf = [0u8; 256];
+    // SAFETY: the buffer is ours and its length goes with it; a name cut short has no nul and is dropped below.
     let host = if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
         CStr::from_bytes_until_nul(&buf)
             .map(|h| h.to_string_lossy().trim_end_matches(".local").to_owned())
@@ -54,11 +57,14 @@ pub fn who() -> String {
 }
 
 fn uname() -> Option<libc::utsname> {
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut name: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uname fills the struct we pass.
     (unsafe { libc::uname(&mut name) } == 0).then_some(name)
 }
 
 fn field(raw: &[libc::c_char]) -> String {
+    // SAFETY: uname's fields are nul-terminated within their arrays.
     unsafe { CStr::from_ptr(raw.as_ptr()) }.to_string_lossy().into_owned()
 }
 
@@ -138,6 +144,7 @@ fn cpu() -> Option<String> {
 fn cpu() -> Option<String> {
     let mut buf = [0u8; 128];
     let mut len = buf.len();
+    // SAFETY: the name is a nul-terminated literal, and the buffer goes with its length.
     let ok = unsafe {
         libc::sysctlbyname(
             c"machdep.cpu.brand_string".as_ptr(),
@@ -179,6 +186,7 @@ fn sysctl<T: Copy>(name: &str) -> Option<T> {
     let name = std::ffi::CString::new(name).ok()?;
     let mut value = std::mem::MaybeUninit::<T>::uninit();
     let mut len = size_of::<T>();
+    // SAFETY: value has room for a T, and that size goes with it.
     let ok = unsafe {
         libc::sysctlbyname(
             name.as_ptr(),
@@ -188,6 +196,7 @@ fn sysctl<T: Copy>(name: &str) -> Option<T> {
             0,
         )
     } == 0;
+    // SAFETY: sysctl succeeded and wrote all size_of::<T>() bytes of value.
     (ok && len == size_of::<T>()).then(|| unsafe { value.assume_init() })
 }
 

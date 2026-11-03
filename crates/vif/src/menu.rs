@@ -41,7 +41,9 @@ pub fn install(proxy: EventLoopProxy<UserEvent>) {
     let Some(menu) = app.mainMenu().and_then(|m| m.itemAtIndex(0)).and_then(|i| i.submenu()) else {
         return;
     };
+    // SAFETY: init on a fresh alloc of an NSObject subclass that adds no fields.
     let target: Retained<Target> = unsafe { msg_send![Target::alloc(mtm), init] };
+    // SAFETY: a fresh NSMenuItem, with an action Target answers.
     let item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -50,6 +52,7 @@ pub fn install(proxy: EventLoopProxy<UserEvent>) {
             &NSString::from_str(","),
         )
     };
+    // SAFETY: the item holds its target weakly, and the target is kept for the app's whole life below.
     unsafe { item.setTarget(Some(&target)) };
     menu.insertItem_atIndex(&item, 2);
     menu.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), 3);

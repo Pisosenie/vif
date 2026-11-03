@@ -151,7 +151,9 @@ pub fn spoken(d: Duration) -> String {
 /// Hours and minutes on this machine's clock: 16:39.
 pub fn time_of_day(at: SystemTime) -> String {
     let secs = at.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as libc::time_t;
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: localtime_r is the thread-safe one, and fills the tm we pass.
     if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
         return String::new();
     }

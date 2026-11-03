@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 /// The process group in front on the terminal, falling back to the shell.
 fn front(pty: &File, shell: u32) -> i32 {
+    // SAFETY: a plain query on an fd we hold open; -1 is checked.
     let front = unsafe { libc::tcgetpgrp(pty.as_raw_fd()) };
     if front > 0 {
         return front;
@@ -29,6 +30,7 @@ pub fn cwd(pty: &File, shell: u32) -> Option<PathBuf> {
 fn own_shell(pid: u32) -> i32 {
     let mut kids = [0 as libc::pid_t; 4];
     let size = size_of_val(&kids) as i32;
+    // SAFETY: the buffer goes with its size in bytes.
     let n = unsafe { libc::proc_listchildpids(pid as i32, kids.as_mut_ptr().cast(), size) };
     let login = args(pid as i32).is_none_or(|argv| argv.first().is_some_and(|a| a.ends_with("login")));
     if n > 0 && login && kids[0] > 0 {
@@ -45,8 +47,10 @@ fn own_shell(pid: u32) -> i32 {
 
 #[cfg(target_os = "macos")]
 fn info(pid: i32) -> Option<libc::proc_bsdinfo> {
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: info is ours, and its size goes with it.
     let read = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
     (read == size).then_some(info)
 }
@@ -72,12 +76,15 @@ fn dir(pid: i32) -> Option<PathBuf> {
     use std::ffi::CStr;
     use std::os::unix::ffi::OsStrExt;
 
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
     let size = size_of::<libc::proc_vnodepathinfo>() as i32;
+    // SAFETY: info is ours, and its size goes with it.
     let read = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDVNODEPATHINFO, 0, (&raw mut info).cast(), size) };
     if read != size {
         return None;
     }
+    // SAFETY: the kernel nul-terminates vip_path within its array.
     let path = unsafe { CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr().cast()) };
     let path = PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes()));
     path.is_dir().then_some(path)
@@ -93,10 +100,12 @@ fn args(pid: i32) -> Option<Vec<String>> {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
     let mut size: libc::size_t = 0;
     let none = std::ptr::null_mut();
+    // SAFETY: asks only for the size, with no buffers.
     if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, none, &mut size, none, 0) } != 0 {
         return None;
     }
     let mut buf = vec![0u8; size];
+    // SAFETY: buf has the size the call before asked for, and that size goes with it.
     if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast(), &mut size, none, 0) } != 0 {
         return None;
     }

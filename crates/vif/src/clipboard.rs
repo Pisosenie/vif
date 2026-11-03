@@ -25,6 +25,8 @@ impl Clipboard {
 
         if let Ok(RawDisplayHandle::Wayland(display)) = window.display_handle().map(|h| h.as_raw()) {
             // The Wayland clipboard rides on the window's own connection, so no XWayland is needed.
+            // SAFETY: winit's own wl_display, alive as long as the event loop, which outlives every
+            // window and its clipboard.
             let (primary, main) =
                 unsafe { copypasta::wayland_clipboard::create_clipboards_from_external(display.display.as_ptr()) };
             return Self {
