@@ -18,6 +18,9 @@ jobs:
   macos:
     needs: version
     runs-on: macos-latest
+    env:
+      # Signing and notarizing run once the repository has the secrets for them.
+      SIGNED: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -25,6 +28,16 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Build vif.app for Apple silicon and Intel
         run: tools/bundle-macos.sh --universal
+      - name: Sign and notarize it
+        if: env.SIGNED == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: tools/notarize-macos.sh target/release/vif.app
       - name: Zip it
         run: ditto -c -k --keepParent target/release/vif.app "vif-${GITHUB_REF_NAME#v}-macos.zip"
       - uses: actions/upload-artifact@v7

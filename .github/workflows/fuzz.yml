@@ -27,7 +27,7 @@ jobs:
           seeds=seeds/${{ matrix.target }}
           [ ${{ matrix.target }} = theme ] && seeds=../assets/themes
           cargo fuzz run -O ${{ matrix.target }} corpus/${{ matrix.target }} $seeds -- -max_total_time=300 -max_len=65536 -rss_limit_mb=2048
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: crash-${{ matrix.target }}
