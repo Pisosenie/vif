@@ -71,14 +71,14 @@ One terminal that drops in from the top of the screen and goes away again, its s
 
 ## Installing
 
-**Arch Linux.** `packaging/arch/vif` builds the release and `packaging/arch/vif-git` the newest commit, each with its `.SRCINFO`:
+**Arch Linux.** Three packages, each with its `.SRCINFO`: `packaging/arch/vif-bin` takes the release's prebuilt binaries and installs in seconds, `vif` builds the release, and `vif-git` the newest commit:
 
 ```sh
 git clone https://github.com/Pisosenie/vif
-cd vif/packaging/arch/vif-git && makepkg -si
+cd vif/packaging/arch/vif-bin && makepkg -si
 ```
 
-Both install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs.
+All three install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs.
 
 **macOS 13 or later**, Apple silicon or Intel: download `vif-<version>-macos.zip` from [Releases](https://github.com/Pisosenie/vif/releases), unzip it and drag `vif.app` to Applications. The app isn't notarized yet, so macOS refuses it the first time: open it once with System Settings → Privacy & Security → Open Anyway, or run
 

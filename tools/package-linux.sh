@@ -10,7 +10,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 mkdir "$work/$name"
-cp target/release/vif target/release/vif-settings packaging/linux/install.sh assets/vif.desktop assets/vif.svg \
+cp target/release/vif target/release/vif-settings packaging/linux/install.sh assets/vif.desktop assets/vif.svg assets/xterm-vif.terminfo \
     README.md LICENSE-MIT LICENSE-APACHE "$work/$name/"
 cp assets/fonts/OFL.txt "$work/$name/OFL-GEIST.txt"
 tar -C "$work" -czf "target/release/$name.tar.gz" "$name"
