@@ -1,0 +1,44 @@
+[package]
+name = "vif-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+vif = { path = "../crates/vif" }
+vif-config = { path = "../crates/config" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "pty"
+path = "fuzz_targets/pty.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "picture"
+path = "fuzz_targets/picture.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme"
+path = "fuzz_targets/theme.rs"
+test = false
+doc = false
+bench = false

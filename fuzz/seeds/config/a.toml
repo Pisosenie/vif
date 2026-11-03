@@ -1,0 +1,10 @@
+[font]
+size = 13
+family = "x"
+[cursor]
+shape = "bem"
+[[rules]]
+host = "prod-*"
+theme = "alarm"
+[greeting]
+show = "window"
