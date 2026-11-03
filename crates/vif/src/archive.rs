@@ -1,9 +1,10 @@
 //! Every command that ran, with what it printed, kept on disk for a while, so "which command
 //! printed that error yesterday" has an answer. Plain JSON lines, one file a day, nothing leaves
-//! the machine.
+//! the machine; only this user can read them, and secrets are taken out before they're written.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, DirBuilder, OpenOptions, Permissions};
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,11 +48,23 @@ pub fn trimmed(output: &str) -> String {
 
 pub fn record(entry: &Entry) {
     let path = dir().join(format!("{}.jsonl", date(entry.at / DAY)));
-    let written = fs::create_dir_all(dir()).and_then(|()| {
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-        let line = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-        writeln!(file, "{line}")
-    });
+    let written = DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir())
+        .and_then(|()| {
+            // Folders and files from before vif closed them get closed too.
+            fs::set_permissions(dir(), Permissions::from_mode(0o700))?;
+            let mut file = OpenOptions::new().create(true).append(true).mode(0o600).open(&path)?;
+            file.set_permissions(Permissions::from_mode(0o600))?;
+            let hidden = Entry {
+                command: crate::secrets::hide(&entry.command),
+                output: crate::secrets::hide(&entry.output),
+                ..entry.clone()
+            };
+            let line = serde_json::to_string(&hidden).map_err(std::io::Error::other)?;
+            writeln!(file, "{line}")
+        });
     if let Err(err) = written {
         log::warn!("can't keep the command in {}: {err}", path.display());
     }
