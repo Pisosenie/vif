@@ -15,6 +15,10 @@ pub const USAGE: &str = "       vif gif FILE [--blocks] [--mono] [--width N] [--
 /// Characters from empty to full.
 const RAMP: &[u8] = b" .,:;-=+*#%@";
 
+/// Pixels a GIF may have, and frames that play; past them it's a bomb, not a picture.
+const LARGEST: u64 = 4096 * 4096;
+const MOST_FRAMES: usize = 1000;
+
 static STOP: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
@@ -24,12 +28,6 @@ struct Options {
     once: bool,
     text: bool,
     width: Option<usize>,
-}
-
-/// A picture as RGBA, and how long it stays.
-struct Raw {
-    rgba: Vec<u8>,
-    delay: Duration,
 }
 
 pub(crate) struct Frame {
@@ -111,34 +109,29 @@ fn play(path: &str, options: &Options) -> Result<(), String> {
 /// A picture drawn in text at most `cols` by `rows` cells, every frame ready to write.
 pub(crate) fn load(path: &Path, blocks: bool, mono: bool, cols: usize, rows: usize, cell: f64) -> Result<Clip, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let (raw, width, height) = if data.starts_with(b"GIF8") {
-        frames(&data)?
+    decode(&data, blocks, mono, (cols, rows), cell)
+}
+
+/// [`load`] from the file's bytes.
+pub(crate) fn decode(data: &[u8], blocks: bool, mono: bool, room: (usize, usize), cell: f64) -> Result<Clip, String> {
+    let size = |w, h| fit(w, h, room.0, room.1, cell);
+    let (shrunk, (cols, rows)) = if data.starts_with(b"GIF8") {
+        frames(data, size)?
     } else {
-        let (rgba, w, h) = crate::wallpaper::decode(&data)?;
+        let (rgba, w, h) = crate::wallpaper::decode(data)?;
+        let (cols, rows) = size(w, h);
         (
-            vec![Raw {
-                rgba,
-                delay: Duration::ZERO,
-            }],
-            w,
-            h,
+            vec![(shrink(&rgba, w, h, cols, rows * 2), Duration::ZERO)],
+            (cols, rows),
         )
     };
-    drop(data);
-    let (cols, rows) = fit(width, height, cols, rows, cell);
-    // Only the scaled samples stay; the full frames go before anything plays.
-    let delays: Vec<Duration> = raw.iter().map(|r| r.delay).collect();
-    let samples: Vec<Vec<[u8; 4]>> = raw
-        .into_iter()
-        .map(|r| shrink(&r.rgba, width, height, cols, rows * 2))
-        .collect();
+    let samples: Vec<&[[u8; 4]]> = shrunk.iter().map(|(s, _)| s.as_slice()).collect();
     let range = levels(&samples);
-    let frames = samples
-        .into_iter()
-        .zip(delays)
+    let frames = shrunk
+        .iter()
         .map(|(samples, delay)| Frame {
-            lines: draw(&samples, cols, rows, blocks, mono, range),
-            delay,
+            lines: draw(samples, cols, rows, blocks, mono, range),
+            delay: *delay,
         })
         .collect();
     Ok(Clip { frames, cols, rows })
@@ -146,7 +139,9 @@ pub(crate) fn load(path: &Path, blocks: bool, mono: bool, cols: usize, rows: usi
 
 /// The terminal's columns and lines, and how many times taller than wide a cell is.
 pub(crate) fn screen() -> (usize, usize, f64) {
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ fills the winsize we pass.
     if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 || size.ws_col == 0 {
         return (80, 24, 2.0);
     }
@@ -171,15 +166,28 @@ fn fit(w: u32, h: u32, cols: usize, rows: usize, cell: f64) -> (usize, usize) {
     (c, r)
 }
 
-/// Every frame of a GIF laid on the one before it, as the GIF says to.
-fn frames(data: &[u8]) -> Result<(Vec<Raw>, u32, u32), String> {
+/// Every frame of a GIF laid on the one before it, as the GIF says to, scaled down to the
+/// cells `size` gives the whole picture as soon as it's drawn, so only one full frame is ever
+/// held.
+#[allow(clippy::type_complexity)]
+fn frames(
+    data: &[u8],
+    size: impl FnOnce(u32, u32) -> (usize, usize),
+) -> Result<(Vec<(Vec<[u8; 4]>, Duration)>, (usize, usize)), String> {
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
     let mut decoder = options.read_info(data).map_err(|e| e.to_string())?;
     let (w, h) = (u32::from(decoder.width()), u32::from(decoder.height()));
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > LARGEST {
+        return Err(format!("{w}×{h} is more than vif plays"));
+    }
+    let (cols, rows) = size(w, h);
     let mut canvas = vec![0u8; (w * h * 4) as usize];
     let mut out = Vec::new();
     while let Some(frame) = decoder.read_next_frame().map_err(|e| e.to_string())? {
+        if out.len() == MOST_FRAMES {
+            break;
+        }
         let before = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
         let (fl, ft, fw, fh) = (
             u32::from(frame.left),
@@ -202,10 +210,7 @@ fn frames(data: &[u8]) -> Result<(Vec<Raw>, u32, u32), String> {
             0 | 1 => Duration::from_millis(100),
             d => Duration::from_millis(u64::from(d) * 10),
         };
-        out.push(Raw {
-            rgba: canvas.clone(),
-            delay,
-        });
+        out.push((shrink(&canvas, w, h, cols, rows * 2), delay));
         match frame.dispose {
             gif::DisposalMethod::Background => {
                 for y in ft..(ft + fh).min(h) {
@@ -226,7 +231,7 @@ fn frames(data: &[u8]) -> Result<(Vec<Raw>, u32, u32), String> {
     if out.is_empty() {
         return Err("no frames in it".to_owned());
     }
-    Ok((out, w, h))
+    Ok((out, (cols, rows)))
 }
 
 /// The picture averaged down to `cols` by `rows` samples, each RGBA.
@@ -263,10 +268,10 @@ fn luma(p: [u8; 4]) -> f32 {
 
 /// The darkest and lightest the picture gets, leaving out the odd pixel, so the characters
 /// use their whole range.
-fn levels(frames: &[Vec<[u8; 4]>]) -> (f32, f32) {
+fn levels(frames: &[&[[u8; 4]]]) -> (f32, f32) {
     let mut all: Vec<f32> = frames
         .iter()
-        .flatten()
+        .flat_map(|f| f.iter())
         .filter(|p| p[3] >= 128)
         .map(|p| luma(*p))
         .collect();
@@ -355,18 +360,22 @@ fn run_frames(frames: &[Frame], cols: usize, rows: usize, once: bool) -> Result<
     let (screen_cols, screen_rows, _) = screen();
     let left = screen_cols.saturating_sub(cols) / 2 + 1;
     let top = screen_rows.saturating_sub(rows) / 2 + 1;
+    // SAFETY: the handler only stores to an atomic, which a signal handler may do.
     unsafe {
         libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
         libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
     }
     // Keys go to this, not onto the screen, and don't wait for Enter.
+    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
     let mut saved: libc::termios = unsafe { std::mem::zeroed() };
+    // SAFETY: tcgetattr fills the termios we pass; failure is checked.
     let quiet = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) } == 0;
     if quiet {
         let mut raw = saved;
         raw.c_lflag &= !(libc::ICANON | libc::ECHO);
         raw.c_cc[libc::VMIN] = 0;
         raw.c_cc[libc::VTIME] = 0;
+        // SAFETY: the termios tcgetattr filled, with only its flags changed.
         unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) };
     }
     let mut out = io::stdout().lock();
@@ -424,6 +433,7 @@ fn run_frames(frames: &[Frame], cols: usize, rows: usize, once: bool) -> Result<
     let _ = out.write_all(b"\x1b[0m\x1b[?25h\x1b[?1049l");
     let _ = out.flush();
     if quiet {
+        // SAFETY: the termios as tcgetattr gave it.
         unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved) };
     }
     Ok(())

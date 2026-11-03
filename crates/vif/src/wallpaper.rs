@@ -63,7 +63,10 @@ pub fn decode(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
 fn jpeg(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
-    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
+    let options = DecoderOptions::default()
+        .jpeg_set_out_colorspace(ColorSpace::RGBA)
+        .set_max_width(8192)
+        .set_max_height(8192);
     let mut decoder = zune_jpeg::JpegDecoder::new_with_options(std::io::Cursor::new(data), options);
     let rgba = decoder.decode().map_err(|e| e.to_string())?;
     let info = decoder.info().ok_or("no picture in it")?;

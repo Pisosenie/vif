@@ -25,6 +25,10 @@ use crate::session::Link;
 pub const PLACEHOLDER: char = '\u{10EEEE}';
 const DIGITS: u32 = 112;
 const LIMIT: usize = 320 << 20;
+/// Pixels one image may have; a bigger one is refused before anything is allocated for it.
+const MOST_PIXELS: u64 = 8192 * 8192;
+/// Bytes a file or a zlib stream may give one image.
+const MOST_BYTES: u64 = 256 << 20;
 const OSC_MARK: &[u8] = b"133;";
 
 pub struct Image {
@@ -117,7 +121,7 @@ impl Filter {
     }
 
     /// Passes `input` on, taking out `ESC _ G … ESC \` and putting placeholders where images show.
-    fn feed(&mut self, input: &[u8]) {
+    pub(crate) fn feed(&mut self, input: &[u8]) {
         let mut i = 0;
         while i < input.len() {
             match &mut self.scan {
@@ -307,7 +311,7 @@ impl Filter {
                 if medium == "t" && !path.contains("tty-graphics-protocol") {
                     return Err("EPERM:not a temporary file".into());
                 }
-                let bytes = std::fs::read(&path).map_err(|e| format!("EBADF:{e}"))?;
+                let bytes = read_file(&path)?;
                 if medium == "t" {
                     let _ = std::fs::remove_file(&path);
                 }
@@ -318,8 +322,12 @@ impl Filter {
         let data = if keys.get(&b'o').is_some_and(|o| o == "z") {
             let mut out = Vec::new();
             flate2::read::ZlibDecoder::new(&data[..])
+                .take(MOST_BYTES + 1)
                 .read_to_end(&mut out)
                 .map_err(|_| "EINVAL:bad zlib data")?;
+            if out.len() as u64 > MOST_BYTES {
+                return Err("EFBIG:image too big".into());
+            }
             out
         } else {
             data
@@ -329,6 +337,7 @@ impl Filter {
             24 | 32 | 0 => {
                 let (width, height) = (number(b's'), number(b'v'));
                 let channels = if number(b'f') == 24 { 3 } else { 4 };
+                too_big(width, height)?;
                 let size = (width as usize) * (height as usize) * channels;
                 if width == 0 || height == 0 || data.len() < size {
                     return Err("EINVAL:wrong size".into());
@@ -356,12 +365,12 @@ impl Filter {
                 cols = image.width.div_ceil(cw);
                 rows = image.height.div_ceil(ch);
             }
-            (0, r) => cols = (image.width * r * ch).div_ceil(image.height.max(1) * cw),
-            (c, 0) => rows = (image.height * c * cw).div_ceil(image.width.max(1) * ch),
+            (0, r) => cols = scale(image.width, r, ch, image.height, cw),
+            (c, 0) => rows = scale(image.height, c, cw, image.width, ch),
             _ => {}
         }
         if cols > columns {
-            rows = (rows * columns).div_ceil(cols).max(1);
+            rows = scale(rows, columns, 1, cols, 1).max(1);
             cols = columns;
             scaled = true;
         }
@@ -443,12 +452,44 @@ impl Filter {
     }
 }
 
+/// `a * b * c / (d * e)` rounded up, without overflowing on numbers a program made up.
+fn scale(a: u32, b: u32, c: u32, d: u32, e: u32) -> u32 {
+    let top = u64::from(a) * u64::from(b) * u64::from(c);
+    let bottom = (u64::from(d) * u64::from(e)).max(1);
+    top.div_ceil(bottom).min(u64::from(u32::MAX)) as u32
+}
+
+fn too_big(width: u32, height: u32) -> Result<(), String> {
+    if u64::from(width) * u64::from(height) > MOST_PIXELS {
+        return Err("EFBIG:image too big".into());
+    }
+    Ok(())
+}
+
+/// An image file a program named: a regular file only, so never a device that never ends,
+/// and no bigger than one image may be.
+fn read_file(path: &str) -> Result<Vec<u8>, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("EBADF:{e}"))?;
+    if !meta.is_file() {
+        return Err("EINVAL:not a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|f| f.take(MOST_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("EBADF:{e}"))?;
+    if bytes.len() as u64 > MOST_BYTES {
+        return Err("EFBIG:image too big".into());
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn png(data: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(io::Cursor::new(data));
     decoder.set_transformations(
         png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA,
     );
     let mut reader = decoder.read_info().map_err(|e| format!("EBADPNG:{e}"))?;
+    too_big(reader.info().width, reader.info().height)?;
     let mut buf = vec![0; reader.output_buffer_size().ok_or("EBADPNG:too big")?];
     let info = reader.next_frame(&mut buf).map_err(|e| format!("EBADPNG:{e}"))?;
     let pixels = &buf[..info.buffer_size()];
@@ -541,7 +582,9 @@ impl EventedReadWrite for GraphicsPty {
         mode: polling::PollMode,
     ) -> io::Result<()> {
         match &mut self.backend {
+            // SAFETY: the caller keeps to register's contract, which is the same for the source inside.
             Backend::Local(pty) => unsafe { pty.register(poll, event, mode) },
+            // SAFETY: as above.
             Backend::Session(link) => unsafe { link.register(poll, event, mode) },
         }
     }
@@ -633,6 +676,48 @@ mod tests {
         let p = placements.get(&1).unwrap();
         assert_eq!((p.cols, p.rows, p.image.width), (3, 2, 25));
         assert_eq!(std::fs::read_to_string(reply).unwrap(), "\x1b_Gi=7;OK\x1b\\");
+    }
+
+    #[test]
+    fn huge_or_endless_images_are_refused() {
+        let (mut f, reply) = filter("huge");
+        // A header that says 16 million by 2 billion pixels, and a little data after it.
+        let mut png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];
+        let size = [0, 0xfe, 0xff, 0xff, 0x8a, 0, 0, 3, 8, 6, 0, 0, 0];
+        for (kind, body) in [
+            (&b"IHDR"[..], &size[..]),
+            (b"IDAT", &[0x78, 0x9c, 0x63, 0, 0, 0, 1, 0, 1]),
+        ] {
+            let mut crc = flate2::Crc::new();
+            crc.update(kind);
+            crc.update(body);
+            png.extend((body.len() as u32).to_be_bytes());
+            png.extend(kind);
+            png.extend(body);
+            png.extend(crc.sum().to_be_bytes());
+        }
+        let bomb = {
+            let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+            z.write_all(&vec![0u8; (MOST_BYTES + 10) as usize]).unwrap();
+            z.finish().unwrap()
+        };
+        let cmds = [
+            format!("\x1b_Gi=1,f=100;{}\x1b\\", STANDARD.encode(&png)),
+            format!("\x1b_Gi=2,t=f;{}\x1b\\", STANDARD.encode("/dev/zero")),
+            format!("\x1b_Gi=3,f=32,s=100000,v=100000,o=z;{}\x1b\\", STANDARD.encode(&bomb)),
+            format!(
+                "\x1b_Gi=4,a=T,f=32,s=1,v=1,r=4000000000;{}\x1b\\",
+                STANDARD.encode([1, 2, 3, 4])
+            ),
+        ];
+        for cmd in &cmds {
+            f.feed(cmd.as_bytes());
+        }
+        let replies = std::fs::read_to_string(reply).unwrap();
+        assert!(replies.contains("i=1;EFBIG"), "{replies}");
+        assert!(replies.contains("i=2;EINVAL:not a regular file"), "{replies}");
+        assert!(replies.contains("i=3;EFBIG"), "{replies}");
+        assert!(replies.contains("i=4;OK"), "{replies}");
     }
 
     #[test]
