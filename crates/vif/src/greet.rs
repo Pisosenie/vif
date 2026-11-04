@@ -24,6 +24,11 @@ const LONGEST: Duration = Duration::from_secs(15);
 static STOP: AtomicBool = AtomicBool::new(false);
 
 pub fn run(args: &[String]) -> ExitCode {
+    if args.len() > 1 || args.first().is_some_and(|a| a.starts_with('-')) {
+        let help = args.first().is_some_and(|a| a == "--help" || a == "-h");
+        eprintln!("usage:\n{USAGE}");
+        return if help { ExitCode::SUCCESS } else { ExitCode::from(2) };
+    }
     let (config, _) = Config::load();
     let greeting = &config.greeting;
     let file = match args.first() {
