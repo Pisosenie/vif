@@ -40,7 +40,7 @@ What is kept stays on this machine in files only you can read (0600, in a 0700 f
 
 ![The sessions dialog: every shell as a card with what is on its screen, which window has it, and one left running after its window closed](docs/sessions.png)
 
-Each shell runs under a small host process, so closing the window or quitting vif leaves it running, and the next vif brings it back in the same windows, tabs and splits with its scrollback and variables, like tmux without tmux. A host starts in about 11 ms and output through it is no slower; closing a tab or typing `exit` ends one for good. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets it go and leaves it running, ctrl-R names it, and `vif attach build` opens it from anywhere. `sessions = false` turns it all off.
+Each shell runs under a small host process, so closing the window or quitting vif leaves it running, and the next vif brings it back in the same windows, tabs and splits with its scrollback and variables, like tmux without tmux. A host starts in about 11 ms and output through it is no slower; closing a tab or typing `exit` ends one for good. Even a restart doesn't lose the windows: they come back with their tabs and splits, a new shell in each pane's folder, and what the old one printed last above it. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets it go and leaves it running, ctrl-R names it, and `vif attach build` opens it from anywhere. `sessions = false` turns it all off.
 
 ## A quick terminal
 
@@ -117,7 +117,7 @@ Run `vif niri` again after changing the height. To open vif where niri opens a t
 - True color, every underline style with its own color (undercurl included), OSC 8 links, OSC 52 clipboard, synchronized output (mode 2026), bracketed paste, focus events, mouse reporting, the kitty keyboard protocol, and kitty graphics: PNG and raw pixels, inline, chunked, from a file, zlib or not. An image takes up cells like text, so it scrolls and clears with them.
 - Shortcuts work in any keyboard layout: ⌘C and ctrl+w mean the Latin key even with Russian on.
 - Tabs in the title bar and splits in any direction, each opening in the folder of the pane you are in. Drag a divider or move it with keys; zoom one pane to the whole tab and back, like tmux's `prefix z`. Each tab says its folder or host and, quieter after it, what runs there.
-- In block mode `c` copies the output, `C` the command, `r` runs it again, `f` folds it, `p` opens it in a pager, `n` notifies when a running one ends, `/` searches. A command that runs longer than `notify_after` and ends while you look elsewhere sends a notification.
+- In block mode `c` copies the output, `C` the command, `r` runs it again, `f` folds it, `p` opens it in a pager, `n` notifies when a running one ends, `/` searches. A command that runs longer than `notify_after` and ends while you look elsewhere sends a notification; on Linux it has Show block, which brings the command up picked.
 - A program that paints its own background, like vim or htop, paints it to the window's edges.
 - On Linux the clipboard goes through the window's own Wayland connection, with the primary selection.
 - Under [Apolline](https://github.com/Pisosenie/apolline) the cursor, selection and accent follow its accent color as it changes.

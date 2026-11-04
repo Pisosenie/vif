@@ -14,10 +14,17 @@ Every release, newest first. The format follows [Keep a Changelog](https://keepa
 
 ### Fixed
 
+- `vif greet --help` printed an error about a file called `--help`.
 - A session host kept every control connection it ever had, so each look at the sessions dialog cost it a file; after a few hundred it could take no more.
 
 ### Added
 
+- After a restart, vif brings back the windows, tabs and splits it had, with a new shell in each pane's folder under what the old one printed last. Session hosts keep their output when the system stops them, with secrets taken out, readable by you alone.
+- The banner about problems in `vif.toml` has Fix typo, Open in settings and × buttons.
+- Search settings by name from the field above the pages; Esc clears it.
+- Settings say what the last change replaced next to Undo, like `font.size was 13`.
+- The sessions dialog groups sessions under the window that has them, with how many panes each has.
+- On Linux, a notification about a finished command has Show block, which brings the command up picked, and Dismiss.
 - Resize splits by dragging the divider, or with ⌃⌘ arrows (ctrl+shift+alt arrows on Linux).
 - Zoom a pane to the whole tab and back with ⇧⌘Enter (ctrl+shift+z), like tmux's `prefix z`.
 - Fuzzing with cargo-fuzz for program output, pictures, `vif.toml` and theme files, run weekly in CI.
