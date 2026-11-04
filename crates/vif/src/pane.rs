@@ -88,6 +88,8 @@ pub struct Spawn<'a> {
     pub attach: Option<String>,
     /// The first shell of its window, which plays the greeting if there is one.
     pub first: bool,
+    /// What the shell this one replaces printed last, shown above it.
+    pub before: Option<Vec<u8>>,
 }
 
 /// A built row: what it draws, where its image cells are, and the command typed on it.
@@ -224,7 +226,15 @@ impl Pane {
             window: spawn.window,
             pane: id,
         };
-        let term = Term::new(term_config(spawn.config), &Size { cols, lines }, proxy.clone());
+        let mut term = Term::new(term_config(spawn.config), &Size { cols, lines }, proxy.clone());
+        if let Some(before) = &spawn.before {
+            let mut parser: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+            parser.advance(&mut term, before);
+            parser.advance(
+                &mut term,
+                b"\x1b[0m\r\n\x1b[2m-- vif started again here; the shell above is gone --\x1b[0m\r\n",
+            );
+        }
         let term = Arc::new(FairMutex::new(term));
 
         let mut env = HashMap::new();
@@ -243,6 +253,7 @@ impl Pane {
         };
         if greet
             && spawn.attach.is_none()
+            && spawn.before.is_none()
             && spawn.command.is_none()
             && (greeting.file.is_some() || greeting.info)
             && let Ok(me) = std::env::current_exe()

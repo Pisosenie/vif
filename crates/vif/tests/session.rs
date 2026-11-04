@@ -26,6 +26,7 @@ impl Host {
             .args(["-c", r#"ulimit -n 64 && exec "$0" session-host "$1" "$2""#])
             .args([env!("CARGO_BIN_EXE_vif"), &id, spec])
             .env("XDG_RUNTIME_DIR", &runtime)
+            .env("XDG_DATA_HOME", &runtime)
             .stdin(Stdio::null())
             .spawn()
             .unwrap();
@@ -168,4 +169,28 @@ fn peeks_answer_and_leave_nothing_open() {
     }
     data.write_all(b"echo still-here\n").unwrap();
     until(&mut data, "still-here");
+}
+
+#[test]
+fn stopping_the_host_keeps_what_it_printed() {
+    let mut host = Host::start("stop");
+    let mut data = host.attach();
+    data.write_all(b"echo API_TOKEN=abc123secret done-$((2+2))\n").unwrap();
+    until(&mut data, "done-4");
+    // SAFETY: a signal to the host this test started.
+    unsafe { libc_kill(host.child.id() as i32, 15) };
+    let status = host.child.wait().unwrap();
+    assert!(status.code().is_some() || status.success(), "{status:?}");
+    let ring = host.dir.parent().unwrap().join("vif/layouts/t1.ring");
+    let kept = std::fs::read_to_string(&ring).unwrap();
+    assert!(kept.contains("done-4"), "{kept}");
+    assert!(
+        kept.contains("API_TOKEN=••••") && !kept.contains("abc123secret"),
+        "{kept}"
+    );
+}
+
+unsafe extern "C" {
+    #[link_name = "kill"]
+    fn libc_kill(pid: i32, signal: i32) -> i32;
 }

@@ -89,6 +89,15 @@ struct Notice {
     lines: Vec<String>,
     until: Instant,
     area: Area,
+    /// The buttons under a config notice, and where they were drawn.
+    buttons: Vec<(Answer, Area)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    Fix,
+    Settings,
+    Close,
 }
 
 pub struct Win {
@@ -113,6 +122,8 @@ pub struct Win {
     mods: Modifiers,
     mouse: (f32, f32),
     pressed: Option<(PaneId, MouseButton)>,
+    /// For what happens outside the window to reach it, like a notification's button.
+    proxy: EventLoopProxy<UserEvent>,
     /// A divider the mouse is dragging, in the tab in front.
     dragging: Option<Seam>,
     on_divider: bool,
@@ -324,6 +335,7 @@ impl Win {
             mods: Modifiers::default(),
             mouse: (0.0, 0.0),
             pressed: None,
+            proxy: shared.proxy.clone(),
             dragging: None,
             on_divider: false,
             clicks: (Instant::now(), 0, (0.0, 0.0)),
@@ -478,10 +490,17 @@ impl Win {
             };
             tabs.push(SavedTab { root, focus });
         }
+        let places = self
+            .panes
+            .values()
+            .filter_map(|p| Some((p.session.clone()?, p.cwd()?)))
+            .collect();
         let saved = Saved {
             tabs,
             active,
             quick: self.quick,
+            places,
+            restart: false,
         };
         if saved != self.saved {
             layouts::save(self.seq, &saved);
@@ -511,8 +530,9 @@ impl Win {
 
     /// Takes over a saved window's sessions, in its tabs and splits.
     fn bring_back(&mut self, shared: &Shared, saved: Saved) {
-        for tab in saved.tabs {
-            let Some(root) = self.build(shared, tab.root) else {
+        let fresh = saved.restart.then_some(&saved.places);
+        for tab in saved.tabs.clone() {
+            let Some(root) = self.build(shared, tab.root, fresh) else {
                 continue;
             };
             let mut ids = Vec::new();
@@ -536,8 +556,20 @@ impl Win {
         }
     }
 
-    fn build(&mut self, shared: &Shared, shape: Shape) -> Option<Node> {
+    /// Panes for `shape`: its sessions taken over, or with `fresh`, new shells in the folders
+    /// the old ones were in, under what those printed last.
+    fn build(
+        &mut self,
+        shared: &Shared,
+        shape: Shape,
+        fresh: Option<&std::collections::BTreeMap<String, PathBuf>>,
+    ) -> Option<Node> {
         match shape {
+            Shape::Pane(session) if fresh.is_some() => {
+                let cwd = fresh.and_then(|places| places.get(&session)).cloned();
+                let before = layouts::last_output(&session);
+                self.spawn_with(shared, None, cwd, None, before).ok().map(Node::Pane)
+            }
             Shape::Pane(session) => match self.spawn_pane(shared, None, None, Some(session)) {
                 Ok(id) => Some(Node::Pane(id)),
                 Err(err) => {
@@ -550,7 +582,7 @@ impl Win {
                 ratio,
                 first,
                 second,
-            } => match (self.build(shared, *first), self.build(shared, *second)) {
+            } => match (self.build(shared, *first, fresh), self.build(shared, *second, fresh)) {
                 (Some(first), Some(second)) => Some(Node::Split {
                     across,
                     ratio,
@@ -569,6 +601,17 @@ impl Win {
         cwd: Option<PathBuf>,
         attach: Option<String>,
     ) -> std::io::Result<PaneId> {
+        self.spawn_with(shared, run, cwd, attach, None)
+    }
+
+    fn spawn_with(
+        &mut self,
+        shared: &Shared,
+        run: Option<&[String]>,
+        cwd: Option<PathBuf>,
+        attach: Option<String>,
+        before: Option<Vec<u8>>,
+    ) -> std::io::Result<PaneId> {
         let id = crate::app::next_pane();
         let spawn = Spawn {
             config: &self.config,
@@ -579,6 +622,7 @@ impl Win {
             window: self.window.id(),
             attach,
             first: self.panes.is_empty(),
+            before,
         };
         let pane = Pane::spawn(id, spawn, self.content(), self.renderer.metrics())?;
         self.panes.insert(id, pane);
@@ -788,12 +832,8 @@ impl Win {
                 self.notice = Some(Notice {
                     lines,
                     until,
-                    area: Area {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 0.0,
-                        h: 0.0,
-                    },
+                    area: Area::default(),
+                    buttons: Vec::new(),
                 });
             }
         }
@@ -816,15 +856,17 @@ impl Win {
         if diagnostics.len() > 4 {
             lines.push(format!("…and {} more: run vif check", diagnostics.len() - 4));
         }
+        let fix = diagnostics.iter().any(|d| d.fix.is_some()).then_some(Answer::Fix);
+        let buttons = [fix, Some(Answer::Settings), Some(Answer::Close)]
+            .into_iter()
+            .flatten()
+            .map(|b| (b, Area::default()))
+            .collect();
         self.notice = Some(Notice {
             lines,
             until: Instant::now() + NOTICE,
-            area: Area {
-                x: 0.0,
-                y: 0.0,
-                w: 0.0,
-                h: 0.0,
-            },
+            area: Area::default(),
+            buttons,
         });
         self.window.request_redraw();
     }
@@ -901,6 +943,11 @@ impl Win {
         if done.is_empty() {
             return;
         }
+        // A command may have moved the shell to another folder, for the layout a restart reads.
+        self.remember();
+        let Some(pane) = self.panes.get_mut(&id) else {
+            return;
+        };
         let keep = self.config.terminal.archive_days > 0 && !pane.replaying();
         let place = if keep {
             pane.location()
@@ -930,9 +977,18 @@ impl Win {
                 continue;
             }
             let command = typed.map_or_else(|| "A command".to_owned(), |c| c.trim().to_owned());
+            let (proxy, window) = (self.proxy.clone(), self.window.id());
+            let show: crate::notify::Show = Box::new(move || {
+                let _ = proxy.send_event(UserEvent::ShowBlock {
+                    window,
+                    pane: id,
+                    block,
+                });
+            });
             crate::notify::send(
                 &format!("{command} finished"),
                 &format!("exit {exit} · {}", marks::spoken(took)),
+                Some(show),
             );
             self.window
                 .request_user_attention(Some(UserAttentionType::Informational));

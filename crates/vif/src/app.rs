@@ -56,6 +56,12 @@ pub enum UserEvent {
         picture: Result<crate::wallpaper::Picture, String>,
     },
     NewWindow,
+    /// Show block in a notification was pressed.
+    ShowBlock {
+        window: WindowId,
+        pane: PaneId,
+        block: u32,
+    },
 }
 
 pub struct Gpu {
@@ -163,7 +169,14 @@ impl App {
                 }],
                 ..Saved::default()
             }],
-            None if config.terminal.sessions && command.is_none() => crate::layouts::take(crate::session::free()),
+            None if config.terminal.sessions && command.is_none() => {
+                let windows = crate::layouts::take(crate::session::free());
+                if windows.is_empty() {
+                    crate::layouts::after_restart()
+                } else {
+                    windows
+                }
+            }
             None => Vec::new(),
         };
         let quick_saved = restore.iter().position(|s| s.quick).map(|i| restore.remove(i));
@@ -409,6 +422,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.open(event_loop, Some(saved), false);
             }
             UserEvent::CloseWindow(id) => self.close(id, event_loop),
+            UserEvent::ShowBlock { window, pane, block } => {
+                if let Some(win) = self.windows.get_mut(&window) {
+                    win.show_block(pane, block);
+                }
+            }
         }
     }
 

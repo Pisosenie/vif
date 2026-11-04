@@ -369,6 +369,16 @@ fn serve(args: &[String]) -> io::Result<i32> {
     };
     let pty = tty::new(&options, size, 0)?;
     let pid = pty.child().id();
+    // SIGTERM goes to one thread of its own, which every thread started after this leaves it to; the shell, started
+    // before, keeps SIGTERM as usual.
+    // SAFETY: the set is ours and starts empty; the mask is this thread's, inherited by new ones.
+    let stop = unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        set
+    };
     let mut master = pty.file().try_clone()?;
     let input = pty.file().try_clone()?;
     // This host reads with blocking calls on threads of its own.
@@ -380,6 +390,20 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let tty_path = slave_name(&master).unwrap_or_default();
     let pty = Arc::new(Mutex::new(pty));
     let state = Arc::new(Mutex::new(State::default()));
+
+    // The machine going down stops every process: what this shell printed last is kept, so the
+    // window that comes back after the restart can show it above a new shell.
+    let (kept, keep_id) = (state.clone(), id.clone());
+    std::thread::spawn(move || {
+        let mut signal = 0;
+        // SAFETY: waits on the set made above, with SIGTERM blocked so only this call takes it.
+        if unsafe { libc::sigwait(&stop, &mut signal) } == 0 {
+            let ring: Vec<u8> = kept.lock().expect("state").ring.iter().copied().collect();
+            keep_output(&keep_id, &ring);
+            // SAFETY: kill only sends a signal, to the shell this host started.
+            unsafe { libc::kill(pid as i32, libc::SIGHUP) };
+        }
+    });
 
     let (data_path, ctl_path) = (socket(id, "data"), socket(id, "ctl"));
     let data = UnixListener::bind(&data_path)?;
@@ -518,6 +542,30 @@ fn serve(args: &[String]) -> io::Result<i32> {
         let _ = control.write_all(format!("exit {code}\n").as_bytes());
     }
     Ok(code)
+}
+
+/// Writes a session's last output where [`crate::layouts::last_output`] finds it, readable by
+/// this user alone and with secrets taken out.
+fn keep_output(id: &str, ring: &[u8]) {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = crate::layouts::kept();
+    let text = crate::secrets::hide(&String::from_utf8_lossy(ring));
+    let written = fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .and_then(|()| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(dir.join(format!("{id}.ring")))?
+                .write_all(text.as_bytes())
+        });
+    if let Err(err) = written {
+        eprintln!("vif session-host: can't keep the output: {err}");
+    }
 }
 
 /// The terminal's own end of `master`, asked in a way that's safe from any thread: ptsname
