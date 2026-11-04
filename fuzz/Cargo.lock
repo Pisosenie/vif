@@ -2609,7 +2609,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vif"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "alacritty_terminal",
  "base64",
@@ -2626,6 +2626,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "open",
+ "percent-encoding",
  "png",
  "polling",
  "pollster",
@@ -2642,7 +2643,7 @@ dependencies = [
 
 [[package]]
 name = "vif-config"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "strsim",
  "toml",
@@ -2660,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "vif-render"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bytemuck",
  "etagere",
