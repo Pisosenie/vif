@@ -2,19 +2,17 @@
 # for vif, Alacritty, kitty and foot. Prints a table.
 import json, os, statistics, subprocess, sys, time
 
-VIF = os.path.expanduser("~/.cache/vif-target/release/vif")
-VTE = os.path.expanduser("~/.cache/vtebench-target/release/vtebench")
-BENCH = "/tmp/vtebench-src/benchmarks"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIF = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "vif")
+VTEBENCH = os.environ.get("VTEBENCH", os.path.expanduser("~/.local/vif-bench/src/vtebench"))
+VTE = os.path.join(VTEBENCH, "target", "release", "vtebench")
+BENCH = os.path.join(VTEBENCH, "benchmarks")
 CFG = "/tmp/vif-bench.toml"
-os.makedirs(os.path.dirname(CFG), exist_ok=True)
 open(CFG, "w").write("[terminal]\nsessions = false\n")
 env = dict(os.environ, VIF_CONFIG=CFG)
-TERMS = {
-    "vif": lambda cmd: [VIF, "-e", *cmd],
-    "alacritty": lambda cmd: ["alacritty", "-e", *cmd],
-    "kitty": lambda cmd: ["kitty", *cmd],
-    "foot": lambda cmd: ["foot", *cmd],
-}
+# What comes before the command each terminal runs.
+PREFIX = {"vif": [VIF, "-e"], "alacritty": ["alacritty", "-e"], "kitty": ["kitty"], "foot": ["foot"]}
+TERMS = {name: (lambda cmd, p=prefix: [*p, *cmd]) for name, prefix in PREFIX.items()}
 
 def tree_rss(pid):
     out = subprocess.run(["ps", "-e", "-o", "pid=,ppid=,rss="], capture_output=True, text=True).stdout
