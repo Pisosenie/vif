@@ -179,6 +179,27 @@ What each number is:
 
 Run them yourself with `bench/run.sh` (or `bench/run.sh latency` for one); it starts and closes only its own processes.
 
+On Linux: Arch on an arm64 virtual machine (12 cores), under headless sway with no GPU, so every GPU terminal draws through Mesa's software renderer. vif 0.1.3, Alacritty 0.17.0, kitty 0.49.2, foot 1.28.0 (Ghostty has no arm64 Arch package), all with their defaults.
+
+| | vif | Alacritty | kitty | foot |
+|---|---:|---:|---:|---:|
+| Window on screen, median of 10 | 123 ms | 126 ms | 124 ms | **37 ms** |
+| Memory when idle | 273 MB | 204 MB | 368 MB | **44 MB** |
+| vtebench dense_cells | **39 ms** | 87 ms | 135 ms | 88 ms |
+| vtebench cursor_motion | **10 ms** | **10 ms** | 76 ms | 28 ms |
+| vtebench scrolling_bottom_small_region | **94 ms** | 106 ms | 125 ms | 118 ms |
+| vtebench scrolling_top_small_region | **92 ms** | 104 ms | 110 ms | 117.5 ms |
+| vtebench scrolling_bottom_region | **104 ms** | 117 ms | 126 ms | 126 ms |
+| vtebench unicode | **7 ms** | 9 ms | 8 ms | 13 ms |
+| vtebench scrolling | 126 ms | **106 ms** | 200 ms | 136 ms |
+| vtebench scrolling_top_region | 105 ms | **101 ms** | 126 ms | 107 ms |
+| vtebench sync_medium_cells | 12 ms | 9 ms | 55 ms | **8 ms** |
+| vtebench medium_cells | 9 ms | 8 ms | 31 ms | **6 ms** |
+| vtebench light_cells | 11 ms | 18 ms | 9 ms | **4 ms** |
+| vtebench scrolling_fullscreen | 13.5 ms | 17 ms | 27 ms | **7 ms** |
+
+foot draws on the CPU, so with no GPU it starts fastest and is lightest; the GPU terminals' memory here is mostly the software renderer's, which is why the Mac numbers above are the ones to compare on memory. vif is the fastest of the four on six of the twelve throughput tests. `bench/linux.sh` runs it under its own headless sway; a key-to-pixel number needs a real display, so it isn't measured here.
+
 ## Themes
 
 A theme is one TOML file with the whole look. `vif.toml` picks one with `theme = "name"` at the top, and anything `vif.toml` sets itself still wins over the theme, the way oh-my-zsh lets your own lines win over its theme.
