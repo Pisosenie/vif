@@ -22,6 +22,10 @@ It is quick to start, light on memory and as fast as Alacritty on throughput; se
 
 zsh and bash mark their prompts and commands without you touching their rc files (fish 4 does it on its own, and Powerlevel10k works too). Every command gets a badge with its exit code, how long it took and when it ended. ⌘↑ picks one as a block: copy what it printed, copy the command, run it again, fold its output into one line, open it in a pager, or ask for a notification when a long one ends. Like Warp's blocks, with no account and nothing leaving the machine.
 
+## Ask a model, on your machine
+
+Off until you turn it on, and then local by default: vif asks [Ollama](https://ollama.com) on this machine, or any OpenAI-compatible API you point it at. In block mode `e` asks why a failed command failed, from the command, its exit code, its folder and the end of what it printed; the answer streams in under it, and Enter types the fix it suggests at the prompt. ⌘I turns the words at the prompt (`find files over 100 MB from this week`) into a command in their place. Nothing runs by itself, nothing is sent until you ask, tokens, keys and passwords are taken out of what is, and there's no account. It goes through `curl`, so vif carries no HTTP of its own, and an API key is read from an environment variable you name, never from `vif.toml`.
+
 ## Hints
 
 ![Hints: links, paths, commit hashes and an IP address on screen, each with a letter floating over it, and a bar that says what the next letter does](docs/hints.png)
@@ -133,7 +137,7 @@ Run `vif niri` again after changing the height. To open vif where niri opens a t
 
 Stable, and used every day: the terminal itself, tabs and splits, blocks, hints, search, the archive, sessions, themes, rules, the config and the settings window.
 
-Newer, and may still change: `vif ssh`, shaders, the picture behind the text, kitty graphics, the quick terminal's hotkey on macOS, `vif gif` and the greeting. Reports are welcome.
+Newer, and may still change: asking a model, `vif ssh`, shaders, the picture behind the text, kitty graphics, the quick terminal's hotkey on macOS, `vif gif` and the greeting. Reports are welcome.
 
 ## Speed
 
@@ -323,6 +327,13 @@ running = "●"
 [hints]
 alphabet = "asdfghjklqwertyuiopzxcvbnm"
 
+[ai]
+enabled = false            # nothing is asked or sent until this is true
+url = "http://localhost:11434/v1"   # Ollama; any OpenAI-compatible API works
+model = "qwen2.5-coder:7b"
+key_env = ""               # the environment variable with an API key, like "OPENAI_API_KEY"
+send = 8000                # the most characters of a command's output one question sends
+
 [greeting]
 show = "off"               # "window" plays it in each new window's first shell, "always" in every new shell
 file = ""                  # a GIF, PNG or JPEG, like "~/Pictures/cat.gif"
@@ -361,6 +372,7 @@ Default keys:
 | Font size | ⌘=, ⌘-, ⌘0 | ctrl+=, ctrl+-, ctrl+0 |
 | Scroll | ⇧PageUp, ⇧PageDown, ⌘Home, ⌘End | shift+pageup, shift+pagedown, ctrl+shift+home, ctrl+shift+end |
 | Settings | ⌘, | ctrl+, |
+| Words at the prompt to a command (AI) | ⌘I | ctrl+shift+i |
 | Quick terminal | `[quick] key` | bound by the compositor, see `vif niri` |
 
 ## Inside

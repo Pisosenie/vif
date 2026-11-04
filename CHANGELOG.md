@@ -19,6 +19,7 @@ Every release, newest first. The format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+- Ask a model, off until turned on: in block mode `e` explains why a command failed and offers the fix, Enter types it at the prompt; ⌘I (ctrl+shift+i) turns the words at the prompt into a command. Ollama on this machine by default, or any OpenAI-compatible API; secrets are taken out of what is sent, the key comes from an environment variable, and nothing runs by itself. The AI page in Settings sets it up.
 - `vif ssh HOST [NAME]`: a shell on another machine that outlives the connection. It lives in a session host over there, vif connects again when the connection drops, and the screen comes back as it was; with vif's shell integration on that side too. vif has to be installed on HOST.
 - After a restart, vif brings back the windows, tabs and splits it had, with a new shell in each pane's folder under what the old one printed last. Session hosts keep their output when the system stops them, with secrets taken out, readable by you alone.
 - The banner about problems in `vif.toml` has Fix typo, Open in settings and × buttons.
