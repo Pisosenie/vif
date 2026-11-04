@@ -10,7 +10,7 @@ Commands as blocks, shells that outlive their window, a drop-down quick terminal
 <img alt="Platforms" src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20macOS-c084fc">
 </p>
 
-![vif with two panes: commands with their exit codes and timings on the left, nvim on the right, tabs that say what runs in them](docs/hero.png)
+![vif in use: commands with their exit codes and timings, a failed one picked as a block and explained by a local model, a split with htop resized and zoomed, and the sessions dialog](docs/demo.gif)
 
 vif is a terminal for people who live in one. It draws on the GPU through wgpu (Metal on macOS, Vulkan or OpenGL on Linux), runs on Wayland without XWayland, and keeps the grid and parser that have run in Alacritty for years. What it adds is what a terminal is for all day: every command a block you can copy, fold and run again; shells that keep running when the window closes; a terminal that drops in from the top of the screen; a search through everything you ran. It is set up in a settings window with a live preview or in a plain `vif.toml`, and both change every open window as you go.
 
@@ -137,6 +137,7 @@ Run `vif niri` again after changing the height. To open vif where niri opens a t
 - Rules by host and folder: a pane `ssh`'d into a matching host, or sitting in a matching folder, takes the rule's theme and a label, so production never looks like your laptop. The host needs nothing installed.
 - A command palette, ⇧⌘P: every action with its keys, every theme and every settings page.
 - `vif set window.opacity 0.9` changes one setting from the shell, keeps your comments, and says when a key is misspelled.
+- Checked inside it: tmux with splits, vim, Neovim (its spell check draws as undercurl), htop and Midnight Commander, with their colors and box lines whole.
 - Its own terminfo, `xterm-vif`, so vim gets undercurl and cursor shapes; hosts over `ssh` that don't know it get `xterm-256color` without you doing anything.
 
 ## What is stable
