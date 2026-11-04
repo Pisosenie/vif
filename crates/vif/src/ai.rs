@@ -187,20 +187,27 @@ fn failure(errors: &str, body: &str) -> String {
         .unwrap_or_else(|| "no answer".to_owned())
 }
 
-/// The command at the end of an answer, in a fenced block.
+/// An answer's lines, each marked when it's inside a ``` block; the fence lines themselves go.
+pub fn lines(text: &str) -> Vec<(&str, bool)> {
+    let mut code = false;
+    text.lines()
+        .filter_map(|line| {
+            if line.trim_start().starts_with("```") {
+                code = !code;
+                return None;
+            }
+            Some((line, code))
+        })
+        .collect()
+}
+
+/// The command at the end of an answer: its last fenced block.
 pub fn fenced(text: &str) -> Option<String> {
-    let start = text.rfind("```")?;
-    let before = &text[..start];
-    let open = before.rfind("```")?;
-    let block = &text[open + 3..start];
-    let block = block.split_once('\n').map_or(block, |(lang, rest)| {
-        if lang.trim().chars().all(|c| c.is_ascii_alphanumeric()) {
-            rest
-        } else {
-            block
-        }
-    });
-    Some(block.trim().to_owned()).filter(|b| !b.is_empty())
+    let lines = lines(text);
+    let end = lines.iter().rposition(|(_, code)| *code)? + 1;
+    let start = lines[..end].iter().rposition(|(_, code)| !*code).map_or(0, |i| i + 1);
+    let block: Vec<&str> = lines[start..end].iter().map(|(l, _)| *l).collect();
+    Some(block.join("\n").trim().to_owned()).filter(|b| !b.is_empty())
 }
 
 /// An answer to Command as one line to type: fences and backticks gone.

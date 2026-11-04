@@ -212,15 +212,10 @@ impl Win {
     }
 }
 
-/// The answer's lines as they show: fences gone, and what they fenced indented and marked as code.
+/// The answer's lines as they show: what fences hold indented and marked as code.
 fn shown(text: &str, cols: usize) -> Vec<(String, bool)> {
     let mut out = Vec::new();
-    let mut code = false;
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            code = !code;
-            continue;
-        }
+    for (line, code) in ai::lines(text) {
         let room = if code { cols.saturating_sub(2).max(1) } else { cols };
         out.extend(
             wrap(line, room)
