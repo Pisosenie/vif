@@ -1,5 +1,6 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
+mod ai;
 mod gallery;
 mod greeting;
 mod more;
@@ -68,13 +69,14 @@ enum Page {
     Tabs,
     Quick,
     Greeting,
+    Ai,
     Rules,
     Keys,
     Terminal,
 }
 
 impl Page {
-    const ALL: [Page; 12] = [
+    const ALL: [Page; 13] = [
         Page::Themes,
         Page::Font,
         Page::Colors,
@@ -84,6 +86,7 @@ impl Page {
         Page::Tabs,
         Page::Quick,
         Page::Greeting,
+        Page::Ai,
         Page::Rules,
         Page::Keys,
         Page::Terminal,
@@ -100,6 +103,7 @@ impl Page {
             Page::Tabs => "Tabs and splits",
             Page::Quick => "Quick terminal",
             Page::Greeting => "Greeting",
+            Page::Ai => "AI",
             Page::Rules => "Rules",
             Page::Keys => "Keys",
             Page::Terminal => "Terminal",
@@ -117,6 +121,9 @@ impl Page {
             Page::Tabs => "Where the tabs sit and how they look, and how splits part.",
             Page::Quick => "One window that drops in from the top of the screen, its shell always running.",
             Page::Greeting => "A picture played in text when a shell starts, with this machine beside it.",
+            Page::Ai => {
+                "A model that says why a command failed, and turns words into a command. Off until you want it."
+            }
             Page::Rules => {
                 "Hosts and folders that change how a pane looks, so production never looks like your laptop."
             }
@@ -136,6 +143,7 @@ impl Page {
             Page::Tabs => "tabs",
             Page::Quick => "quick",
             Page::Greeting => "greeting",
+            Page::Ai => "ai",
             Page::Rules => "rules",
             Page::Keys => "keys",
             Page::Terminal => "terminal",
@@ -221,6 +229,7 @@ enum Message {
     More(more::Change),
     Query(String),
     Greet(greeting::Change),
+    Ai(ai::Change),
 }
 
 struct Settings {
@@ -346,6 +355,7 @@ impl Settings {
             Message::Query(query) => self.query = query,
             Message::More(change) => self.change(change),
             Message::Greet(change) => return self.greet(change),
+            Message::Ai(change) => return self.ai(change),
             Message::Family(family) => self.edit(|e| e.set("font", "family", family)),
             Message::Size(v) => self.edit(|e| e.set_float("font", "size", v)),
             Message::LineHeight(v) => self.edit(|e| e.set_float("font", "line_height", v)),
@@ -773,6 +783,7 @@ impl Settings {
             Page::Effects => self.effects_page(),
             Page::Quick => self.quick_page(),
             Page::Greeting => self.greeting_page(),
+            Page::Ai => self.ai_page(),
             Page::Rules => self.rules_page(),
             Page::Font => {
                 let family = pick_list(self.families.clone(), Some(c.font.family.clone()), Message::Family)
