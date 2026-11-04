@@ -174,11 +174,11 @@ impl Win {
             (None, true, true) => "No answer came back.".to_owned(),
             (None, false, _) => answer.clone(),
         };
-        let lines = wrap(&body, cols);
+        let lines = shown(&body, cols);
         let fix = done.then(|| ai::fenced(&answer)).flatten();
         let most = ((content.h * 0.5) / m.cell_height) as usize;
-        let shown: Vec<&String> = lines.iter().skip(lines.len().saturating_sub(most.max(3))).collect();
-        let h = (shown.len() + 3) as f32 * m.cell_height + 2.0 * pad;
+        let last: Vec<&(String, bool)> = lines.iter().skip(lines.len().saturating_sub(most.max(3))).collect();
+        let h = (last.len() + 3) as f32 * m.cell_height + 2.0 * pad;
         let (x, y) = (content.x + (content.w - w) / 2.0, content.y + content.h - h - pad);
         let panel = mix(scheme.fg(), scheme.bg(), 0.9);
         scene
@@ -190,8 +190,9 @@ impl Win {
         let mut ty = y + pad;
         self.label(&heading, x + pad, ty, scheme.accent(), Style::Bold, &mut text);
         ty += 1.5 * m.cell_height;
-        for line in shown {
-            self.label(line, x + pad, ty, scheme.fg(), Style::Regular, &mut text);
+        for (line, code) in last {
+            let color = if *code { scheme.accent() } else { scheme.fg() };
+            self.label(line, x + pad, ty, color, Style::Regular, &mut text);
             ty += m.cell_height;
         }
         let keys = match (fix.is_some(), done) {
@@ -209,6 +210,25 @@ impl Win {
         );
         scene.over.extend(text.mask);
     }
+}
+
+/// The answer's lines as they show: fences gone, and what they fenced indented and marked as code.
+fn shown(text: &str, cols: usize) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut code = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            code = !code;
+            continue;
+        }
+        let room = if code { cols.saturating_sub(2).max(1) } else { cols };
+        out.extend(
+            wrap(line, room)
+                .into_iter()
+                .map(|l| if code { (format!("  {l}"), true) } else { (l, false) }),
+        );
+    }
+    out
 }
 
 /// `text` in lines of at most `cols` characters, broken at spaces where it can be.
@@ -252,5 +272,14 @@ mod tests {
         );
         assert_eq!(wrap("a\n\nb", 5), vec!["a", "", "b"]);
         assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn fenced_commands_show_as_code_without_fences() {
+        let lines = shown("It's gone.\n```sh\nmkdir -p x\n```", 40);
+        assert_eq!(
+            lines,
+            vec![("It's gone.".to_owned(), false), ("  mkdir -p x".to_owned(), true)]
+        );
     }
 }
