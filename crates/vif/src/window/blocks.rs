@@ -25,6 +25,7 @@ enum Act {
     Fold,
     Pager,
     Notify,
+    Explain,
 }
 
 impl Win {
@@ -114,6 +115,7 @@ impl Win {
                 "f" => self.block_act(Act::Fold, shared),
                 "p" => self.block_act(Act::Pager, shared),
                 "n" => self.block_act(Act::Notify, shared),
+                "e" => self.block_act(Act::Explain, shared),
                 "/" => {
                     self.block = None;
                     if let Some(pane) = self.tabs.get(self.active).and_then(|t| self.panes.get_mut(&t.focus)) {
@@ -175,6 +177,10 @@ impl Win {
                 if !self.notify.remove(&(pane_id, id)) {
                     self.notify.insert((pane_id, id));
                 }
+            }
+            Act::Explain => {
+                self.block = None;
+                self.explain(pane_id, id);
             }
         }
         self.window.request_redraw();
@@ -245,13 +251,22 @@ impl Win {
             ]
         } else {
             let fold = if pane.folded(id) { "Unfold" } else { "Fold" };
-            vec![
+            let failed = pane
+                .blocks
+                .get(id)
+                .and_then(|b| b.ended)
+                .is_some_and(|(_, exit)| exit != 0);
+            let mut acts = vec![
                 (Act::Output, "Copy output".into(), "c"),
                 (Act::Command, "Command".into(), "C"),
                 (Act::Rerun, "Rerun".into(), "r"),
                 (Act::Fold, fold.into(), "f"),
                 (Act::Pager, "Pager".into(), "p"),
-            ]
+            ];
+            if failed && self.config.ai.enabled {
+                acts.push((Act::Explain, "Why it failed".into(), "e"));
+            }
+            acts
         };
         let gap = 6.0 * scale;
         let inner = 8.0 * scale;

@@ -56,6 +56,12 @@ pub enum UserEvent {
         picture: Result<crate::wallpaper::Picture, String>,
     },
     NewWindow,
+    /// A piece of the model's answer to question `seq`.
+    Ai {
+        window: WindowId,
+        seq: u64,
+        answer: crate::ai::Answer,
+    },
     /// Show block in a notification was pressed.
     ShowBlock {
         window: WindowId,
@@ -422,6 +428,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.open(event_loop, Some(saved), false);
             }
             UserEvent::CloseWindow(id) => self.close(id, event_loop),
+            UserEvent::Ai { window, seq, answer } => {
+                if let Some(win) = self.windows.get_mut(&window) {
+                    win.ai_event(seq, answer);
+                }
+            }
             UserEvent::ShowBlock { window, pane, block } => {
                 if let Some(win) = self.windows.get_mut(&window) {
                     win.show_block(pane, block);

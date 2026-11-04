@@ -532,6 +532,27 @@ impl Pane {
         })
     }
 
+    /// What is typed at the prompt now, when no command runs.
+    pub fn typed(&self) -> Option<String> {
+        if self.busy() {
+            return None;
+        }
+        let term = self.term.lock();
+        let grid = term.grid();
+        let (first, last) = (-(grid.history_size() as i32), grid.screen_lines() as i32 - 1);
+        (first..=last).rev().find_map(|l| {
+            let row = &grid[Line(l)];
+            let at = (0..row.len()).find(|&c| {
+                row[Column(c)]
+                    .zerowidth()
+                    .and_then(|z| marks::find(z, Kind::Command))
+                    .is_some()
+            })?;
+            let text: String = (at + 1..row.len()).map(|c| row[Column(c)].c).collect();
+            Some(text.trim().to_owned())
+        })
+    }
+
     pub fn link_at(&self, col: usize, line: usize) -> Option<(String, String)> {
         let term = self.term.lock();
         let point = self.point(&term, col, line);

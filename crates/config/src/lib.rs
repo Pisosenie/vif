@@ -15,7 +15,7 @@ pub use edit::{Editor, setting_changed};
 pub use read::known;
 pub use theme::{Palette, Rgb};
 
-pub const ACTIONS: [&str; 47] = [
+pub const ACTIONS: [&str; 48] = [
     "copy",
     "paste",
     "search",
@@ -38,6 +38,7 @@ pub const ACTIONS: [&str; 47] = [
     "resize_right",
     "resize_up",
     "resize_down",
+    "ai_command",
     "focus_next",
     "focus_previous",
     "focus_left",
@@ -83,6 +84,22 @@ pub struct Config {
     pub background: Background,
     pub quick: Quick,
     pub greeting: Greeting,
+    pub ai: Ai,
+}
+
+/// A language model for explaining failed commands and turning words into one. Off until it's
+/// turned on; nothing leaves the machine unless `url` points elsewhere.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ai {
+    pub enabled: bool,
+    /// An OpenAI-compatible API: Ollama's by default, or any other.
+    pub url: String,
+    pub model: String,
+    /// The environment variable holding the API key, if the API wants one. The key itself is
+    /// never written in vif.toml.
+    pub key_env: String,
+    /// The most characters of a command's output one question sends.
+    pub send: u32,
 }
 
 /// A picture played in text above the first prompt, the way people run neofetch.
@@ -454,6 +471,13 @@ impl Default for Config {
                 height: 0.45,
                 hide_on_blur: true,
             },
+            ai: Ai {
+                enabled: false,
+                url: "http://localhost:11434/v1".to_owned(),
+                model: "qwen2.5-coder:7b".to_owned(),
+                key_env: String::new(),
+                send: 8000,
+            },
             greeting: Greeting {
                 show: GreetingShow::Off,
                 file: None,
@@ -608,6 +632,7 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("cmd+ctrl+right", "resize_right"),
             ("cmd+ctrl+up", "resize_up"),
             ("cmd+ctrl+down", "resize_down"),
+            ("cmd+i", "ai_command"),
             ("cmd+]", "focus_next"),
             ("cmd+[", "focus_previous"),
             ("cmd+alt+left", "focus_left"),
@@ -656,6 +681,7 @@ pub fn default_keys() -> &'static [(&'static str, &'static str)] {
             ("alt+ctrl+shift+right", "resize_right"),
             ("alt+ctrl+shift+up", "resize_up"),
             ("alt+ctrl+shift+down", "resize_down"),
+            ("ctrl+shift+i", "ai_command"),
             ("ctrl+shift+]", "focus_next"),
             ("ctrl+shift+[", "focus_previous"),
             ("ctrl+alt+left", "focus_left"),

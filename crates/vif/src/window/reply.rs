@@ -1,0 +1,257 @@
+//! The model's answers in the window: why a block failed, in a panel as the words come, and a
+//! command for the words at the prompt, typed in place of them when it's ready.
+
+use vif_render::{Rect, Scene, Style};
+use winit::event::{ElementState, KeyEvent};
+use winit::keyboard::{Key, NamedKey};
+
+use super::{UserEvent, Win};
+use crate::ai::{self, Answer, Ask};
+use crate::colors::mix;
+use crate::layout::PaneId;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    Explain,
+    Command,
+}
+
+pub(super) struct Reply {
+    asked: Asked,
+    pane: PaneId,
+    /// Which question this is, so a late answer to an older one is dropped.
+    seq: u64,
+    heading: String,
+    text: String,
+    failed: Option<String>,
+    done: bool,
+}
+
+impl Win {
+    /// Whether questions may be asked; says how to turn it on when not.
+    fn ai_on(&mut self) -> bool {
+        if !self.config.ai.enabled {
+            self.tell(vec![
+                "AI is off.".to_owned(),
+                "Turn it on in Settings → AI, or with [ai] enabled = true in vif.toml.".to_owned(),
+            ]);
+        }
+        self.config.ai.enabled
+    }
+
+    fn ask(&mut self, asked: Asked, pane: PaneId, heading: String, question: Ask) {
+        let seq = self.reply.as_ref().map_or(1, |r| r.seq + 1);
+        self.reply = Some(Reply {
+            asked,
+            pane,
+            seq,
+            heading,
+            text: String::new(),
+            failed: None,
+            done: false,
+        });
+        let (proxy, window) = (self.proxy.clone(), self.window.id());
+        ai::ask(&self.config.ai, question, move |answer| {
+            let _ = proxy.send_event(UserEvent::Ai { window, seq, answer });
+        });
+        self.window.request_redraw();
+    }
+
+    /// Asks why a finished block failed.
+    pub(super) fn explain(&mut self, pane_id: PaneId, block: u32) {
+        if !self.ai_on() {
+            return;
+        }
+        let Some(pane) = self.panes.get(&pane_id) else {
+            return;
+        };
+        let Some(command) = pane.command(block) else {
+            return self.flash("That command is gone from the scrollback");
+        };
+        let exit = pane.blocks.get(block).and_then(|b| b.ended).map_or(0, |(_, e)| e);
+        let question = Ask::Explain {
+            command: command.trim().to_owned(),
+            exit,
+            cwd: pane.cwd().map(|c| crate::tilde(&c)).unwrap_or_default(),
+            output: pane.output(block).unwrap_or_default(),
+        };
+        let heading = format!("Why `{}` failed · {}", command.trim(), self.config.ai.model);
+        self.ask(Asked::Explain, pane_id, heading, question);
+    }
+
+    /// Turns the words at the prompt into a command, typed in their place.
+    pub(super) fn command_from_words(&mut self) {
+        if !self.ai_on() {
+            return;
+        }
+        let Some((id, pane)) = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| Some((t.focus, self.panes.get(&t.focus)?)))
+        else {
+            return;
+        };
+        let words = pane.typed().unwrap_or_default();
+        let words = words.trim_start_matches('#').trim().to_owned();
+        if words.is_empty() {
+            return self.flash("Type what the command should do, then ask");
+        }
+        let cwd = pane.cwd().map(|c| crate::tilde(&c)).unwrap_or_default();
+        self.ask(Asked::Command, id, String::new(), Ask::Command { words, cwd });
+        self.flash(&format!("Asking {}…", self.config.ai.model));
+    }
+
+    /// A piece of an answer, or its end.
+    pub fn ai_event(&mut self, seq: u64, answer: Answer) {
+        let Some(reply) = self.reply.as_mut().filter(|r| r.seq == seq) else {
+            return;
+        };
+        match answer {
+            Answer::Text(text) => reply.text.push_str(&text),
+            Answer::Failed(why) => reply.failed = Some(why),
+            Answer::Done => reply.done = true,
+        }
+        if reply.asked == Asked::Command && (reply.done || reply.failed.is_some()) {
+            let reply = self.reply.take().expect("a reply");
+            if let Some(why) = reply.failed {
+                return self.tell(vec!["The model didn't answer.".to_owned(), why]);
+            }
+            let command = ai::one_line(&reply.text);
+            if command.is_empty() {
+                return self.flash("No command came back");
+            }
+            if let Some(pane) = self.panes.get(&reply.pane) {
+                // ctrl-e and ctrl-u clear the line in zsh, bash and fish alike.
+                pane.input(b"\x05\x15".to_vec());
+            }
+            self.paste(command);
+        }
+        self.window.request_redraw();
+    }
+
+    /// Keys while an answer shows: Enter types its command, c copies it, Esc closes it.
+    pub(super) fn reply_key(&mut self, event: &KeyEvent) -> bool {
+        let Some(reply) = self.reply.as_ref().filter(|r| r.asked == Asked::Explain) else {
+            return false;
+        };
+        if event.state != ElementState::Pressed {
+            return true;
+        }
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.reply = None,
+            Key::Named(NamedKey::Enter) => {
+                if let Some(fix) = ai::fenced(&reply.text) {
+                    self.reply = None;
+                    self.paste(fix);
+                }
+            }
+            Key::Character(c) if c == "c" => {
+                let text = reply.text.clone();
+                self.clipboard.set(text);
+                self.flash("Answer copied");
+            }
+            _ => {}
+        }
+        self.window.request_redraw();
+        true
+    }
+
+    pub(super) fn draw_reply(&mut self, scene: &mut Scene) {
+        let Some(reply) = self.reply.as_ref().filter(|r| r.asked == Asked::Explain) else {
+            return;
+        };
+        let (heading, answer, failed, done) = (
+            reply.heading.clone(),
+            reply.text.clone(),
+            reply.failed.clone(),
+            reply.done,
+        );
+        let m = self.renderer.metrics();
+        let scale = self.scale();
+        let scheme = self.scheme;
+        let content = self.content();
+        let pad = (14.0 * scale).round();
+        let w = (content.w - 2.0 * pad).min(110.0 * m.cell_width);
+        let cols = ((w - 2.0 * pad) / m.cell_width).max(10.0) as usize;
+        let body = match (&failed, answer.is_empty(), done) {
+            (Some(why), ..) => format!("The model didn't answer: {why}"),
+            (None, true, false) => "…".to_owned(),
+            (None, true, true) => "No answer came back.".to_owned(),
+            (None, false, _) => answer.clone(),
+        };
+        let lines = wrap(&body, cols);
+        let fix = done.then(|| ai::fenced(&answer)).flatten();
+        let most = ((content.h * 0.5) / m.cell_height) as usize;
+        let shown: Vec<&String> = lines.iter().skip(lines.len().saturating_sub(most.max(3))).collect();
+        let h = (shown.len() + 3) as f32 * m.cell_height + 2.0 * pad;
+        let (x, y) = (content.x + (content.w - w) / 2.0, content.y + content.h - h - pad);
+        let panel = mix(scheme.fg(), scheme.bg(), 0.9);
+        scene
+            .front
+            .push(Rect::fill(x, y, w, h, panel).rounded(self.radius() * 1.5));
+        let mut text = Scene::default();
+        let muted = mix(scheme.fg(), scheme.bg(), 0.45);
+        let heading: String = heading.chars().take(cols).collect();
+        let mut ty = y + pad;
+        self.label(&heading, x + pad, ty, scheme.accent(), Style::Bold, &mut text);
+        ty += 1.5 * m.cell_height;
+        for line in shown {
+            self.label(line, x + pad, ty, scheme.fg(), Style::Regular, &mut text);
+            ty += m.cell_height;
+        }
+        let keys = match (fix.is_some(), done) {
+            (true, _) => "↵ type the fix at the prompt · c copy · Esc close",
+            (false, true) => "c copy · Esc close",
+            (false, false) => "Esc close",
+        };
+        self.label(
+            keys,
+            x + pad,
+            y + h - pad - m.cell_height,
+            muted,
+            Style::Regular,
+            &mut text,
+        );
+        scene.over.extend(text.mask);
+    }
+}
+
+/// `text` in lines of at most `cols` characters, broken at spaces where it can be.
+fn wrap(text: &str, cols: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut current = String::new();
+        for word in line.split(' ') {
+            let fits = current.chars().count() + word.chars().count() < cols;
+            if !current.is_empty() && !fits {
+                out.push(std::mem::take(&mut current));
+            }
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+            while current.chars().count() > cols {
+                let head: String = current.chars().take(cols).collect();
+                current = current.chars().skip(cols).collect();
+                out.push(head);
+            }
+        }
+        out.push(current);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn answers_wrap_at_spaces() {
+        assert_eq!(
+            wrap("the folder build is missing", 12),
+            vec!["the folder", "build is", "missing"]
+        );
+        assert_eq!(wrap("a\n\nb", 5), vec!["a", "", "b"]);
+        assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    }
+}

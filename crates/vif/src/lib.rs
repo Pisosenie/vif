@@ -2,6 +2,7 @@
 
 #![warn(clippy::undocumented_unsafe_blocks)]
 
+mod ai;
 mod app;
 mod archive;
 mod blocks;

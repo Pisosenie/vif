@@ -24,6 +24,9 @@ impl Win {
             self.block_key(&event, shared);
             return false;
         }
+        if self.reply_key(&event) {
+            return false;
+        }
         if let Some(id) = self.tabs.get(self.active).map(|t| t.focus)
             && self.panes.get(&id).is_some_and(|p| p.hints.is_some())
         {
@@ -259,6 +262,7 @@ impl Win {
                 }
             }
             "split_right" => self.split(shared, true),
+            "ai_command" => self.command_from_words(),
             "zoom" => {
                 if let Some(tab) = self.tabs.get_mut(self.active)
                     && !matches!(tab.root, Node::Pane(_))

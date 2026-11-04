@@ -11,7 +11,7 @@ use crate::{
 type Key<'i> = Spanned<DeString<'i>>;
 type Value<'i> = Spanned<DeValue<'i>>;
 
-const SECTIONS: [&str; 13] = [
+const SECTIONS: [&str; 14] = [
     "font",
     "colors",
     "window",
@@ -25,8 +25,10 @@ const SECTIONS: [&str; 13] = [
     "background",
     "quick",
     "greeting",
+    "ai",
 ];
 const QUICK: [&str; 3] = ["key", "height", "hide_on_blur"];
+const AI: [&str; 5] = ["enabled", "url", "model", "key_env", "send"];
 const GREETING: [&str; 6] = ["show", "file", "blocks", "info", "height", "loops"];
 const GREETING_SHOW: [(&str, GreetingShow); 3] = [
     ("off", GreetingShow::Off),
@@ -137,7 +139,7 @@ const OPTION_AS_ALT: [(&str, OptionAsAlt); 4] = [
 
 /// Every key vif.toml knows, as `section.key`, and the top-level ones bare.
 pub fn known() -> Vec<String> {
-    let sections: [(&str, &[&str]); 12] = [
+    let sections: [(&str, &[&str]); 13] = [
         ("font", &FONT),
         ("colors", &COLORS),
         ("window", &WINDOW),
@@ -150,6 +152,7 @@ pub fn known() -> Vec<String> {
         ("background", &BACKGROUND),
         ("quick", &QUICK),
         ("greeting", &GREETING),
+        ("ai", &AI),
     ];
     let mut out: Vec<String> = TOP.iter().map(|k| (*k).to_owned()).collect();
     for (section, keys) in sections {
@@ -236,6 +239,7 @@ impl Reader<'_> {
                 "background" => self.background(section, config),
                 "quick" => self.quick(section, config),
                 "greeting" => self.greeting(section, config),
+                "ai" => self.ai(section, config),
                 _ => self.keys(section, config),
             }
         }
@@ -390,6 +394,31 @@ impl Reader<'_> {
                 "height" => quick.height = self.float(key, value, 0.15..=1.0).unwrap_or(quick.height),
                 "hide_on_blur" => quick.hide_on_blur = self.boolean(key, value).unwrap_or(quick.hide_on_blur),
                 _ => self.unknown(key, "quick setting", &QUICK),
+            }
+        }
+    }
+
+    fn ai(&mut self, table: &DeTable, config: &mut Config) {
+        let ai = &mut config.ai;
+        for (key, value) in table.iter() {
+            match key.get_ref().as_ref() {
+                "enabled" => ai.enabled = self.boolean(key, value).unwrap_or(ai.enabled),
+                "url" | "model" | "key_env" => {
+                    let Some(v) = self.string(key, value).map(|v| v.trim().to_owned()) else {
+                        continue;
+                    };
+                    match key.get_ref().as_ref() {
+                        "url" => ai.url = v.trim_end_matches('/').to_owned(),
+                        "model" => ai.model = v,
+                        _ => ai.key_env = v,
+                    }
+                }
+                "send" => {
+                    if let Some(v) = self.integer(key, value, 500..=200_000) {
+                        ai.send = v as u32;
+                    }
+                }
+                _ => self.unknown(key, "ai setting", &AI),
             }
         }
     }

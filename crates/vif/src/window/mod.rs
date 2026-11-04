@@ -36,6 +36,7 @@ pub mod looks;
 mod mouse;
 mod overlays;
 mod palette;
+mod reply;
 mod scrollbar;
 mod sessions;
 mod tabs;
@@ -158,6 +159,8 @@ pub struct Win {
     toast: Option<(String, Instant)>,
     ticks: HashMap<PaneId, scrollbar::Ticks>,
     sessions: Option<sessions::Sessions>,
+    /// What the model is saying, or about to.
+    reply: Option<reply::Reply>,
     hud: Option<hud::Hud>,
 }
 
@@ -364,6 +367,7 @@ impl Win {
             toast: None,
             ticks: HashMap::new(),
             sessions: None,
+            reply: None,
             hud: None,
         };
         win.set_notice(diagnostics);
@@ -1360,6 +1364,7 @@ impl Win {
         self.draw_palette(scene);
         self.draw_sessions(scene);
         self.draw_history(scene);
+        self.draw_reply(scene);
         self.draw_notice(scene);
         self.draw_toast(scene);
         self.draw_hud(scene);
