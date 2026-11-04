@@ -430,9 +430,9 @@ fn serve(args: &[String]) -> io::Result<i32> {
                 continue;
             };
             let mut s = shared.lock().expect("state");
-            let (front, back) = s.ring.as_slices();
+            let ring: Vec<u8> = s.ring.iter().copied().collect();
             let mut stream = stream;
-            if stream.write_all(front).and_then(|()| stream.write_all(back)).is_err() {
+            if stream.write_all(&replayable(&ring)).is_err() {
                 continue;
             }
             if let Some((_, old)) = s.client.take() {
@@ -561,25 +561,29 @@ fn serve(args: &[String]) -> io::Result<i32> {
 /// Writes a session's last output where [`crate::layouts::last_output`] finds it, readable by
 /// this user alone and with secrets taken out.
 fn keep_output(id: &str, ring: &[u8]) {
-    use std::os::unix::fs::DirBuilderExt;
-    let dir = crate::layouts::kept();
-    let text = crate::secrets::hide(&String::from_utf8_lossy(ring));
-    let written = fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&dir)
-        .and_then(|()| {
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(dir.join(format!("{id}.ring")))?
-                .write_all(text.as_bytes())
-        });
+    let text = crate::secrets::hide(&String::from_utf8_lossy(&replayable(ring)));
+    let written = crate::layouts::kept_made().and_then(|dir| {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(dir.join(format!("{id}.ring")))?
+            .write_all(text.as_bytes())
+    });
     if let Err(err) = written {
         eprintln!("vif session-host: can't keep the output: {err}");
     }
+}
+
+/// Output to play again, without zsh's mark for a line that had no newline: a `%` and spaces to
+/// the edge of the terminal as wide as it was then. Played at another width, the spaces wrap and
+/// push the next prompt over.
+fn replayable(bytes: &[u8]) -> Vec<u8> {
+    static FILL: std::sync::LazyLock<regex::bytes::Regex> = std::sync::LazyLock::new(|| {
+        regex::bytes::Regex::new(r"(?:\x1b\[[0-9;]*m)*[%#](?:\x1b\[[0-9;]*m)* +\r \r").expect("pattern")
+    });
+    FILL.replace_all(bytes, &b""[..]).into_owned()
 }
 
 /// The terminal's own end of `master`, asked in a way that's safe from any thread: ptsname
@@ -598,4 +602,16 @@ fn slave_name(master: &File) -> Option<PathBuf> {
     // SAFETY: both calls leave a nul-terminated string in the buffer when they succeed.
     let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
     Some(PathBuf::from(name.to_string_lossy().into_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zsh_line_marks_go_from_played_back_output() {
+        let ring = b"ls\r\nx\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m         \r \r\r~ > ";
+        assert_eq!(replayable(ring), b"ls\r\nx\r~ > ".to_vec());
+        assert_eq!(replayable(b"50% done\r\n"), b"50% done\r\n".to_vec());
+    }
 }

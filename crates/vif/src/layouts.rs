@@ -197,17 +197,7 @@ pub fn last_output(session: &str) -> Option<Vec<u8>> {
     let path = kept().join(format!("{session}.ring"));
     let bytes = fs::read(&path).ok();
     let _ = fs::remove_file(&path);
-    bytes.map(|b| without_fill(&b))
-}
-
-/// `bytes` without zsh's mark for a line that had no newline: a `%` and spaces to the edge of the
-/// terminal as wide as it was then. Played back at another width, the spaces wrap and push the
-/// next prompt over.
-fn without_fill(bytes: &[u8]) -> Vec<u8> {
-    static FILL: std::sync::LazyLock<regex::bytes::Regex> = std::sync::LazyLock::new(|| {
-        regex::bytes::Regex::new(r"(?:\x1b\[[0-9;]*m)*[%#](?:\x1b\[[0-9;]*m)* +\r \r").expect("pattern")
-    });
-    FILL.replace_all(bytes, &b""[..]).into_owned()
+    bytes
 }
 
 fn pid_of(path: &std::path::Path) -> i32 {
@@ -297,13 +287,6 @@ mod tests {
             first: Box::new(first),
             second: Box::new(second),
         }
-    }
-
-    #[test]
-    fn zsh_line_marks_go_from_played_back_output() {
-        let ring = b"ls\r\nx\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m         \r \r\r~ > ";
-        assert_eq!(without_fill(ring), b"ls\r\nx\r~ > ".to_vec());
-        assert_eq!(without_fill(b"50% done\r\n"), b"50% done\r\n".to_vec());
     }
 
     #[test]
