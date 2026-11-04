@@ -30,6 +30,8 @@ struct Card {
     preview: Vec<String>,
     /// The pane here that has it.
     here: Option<PaneId>,
+    /// The window it's in, in the order windows show, and the heading over them.
+    group: (usize, String),
 }
 
 #[derive(Default)]
@@ -48,10 +50,19 @@ impl Win {
             .iter()
             .filter_map(|(id, pane)| Some((pane.session.clone()?, *id)))
             .collect();
-        let cards = session::all()
+        let others: Vec<(bool, Vec<String>)> = crate::layouts::windows()
+            .into_iter()
+            .filter(|(_, ids)| !ids.iter().any(|id| mine.iter().any(|(m, _)| m == id)))
+            .collect();
+        let this = if self.quick { "Quick terminal" } else { "This window" };
+        let mut cards: Vec<Card> = session::all()
             .into_iter()
             .map(|s| {
                 let here = mine.iter().find(|(id, _)| *id == s.id).map(|(_, pane)| *pane);
+                let group = match here {
+                    Some(_) => (0, format!("{this} · {}", panes(mine.len()))),
+                    None => grouped(&s.id, s.attached, &others),
+                };
                 let status = match (here, s.attached, s.since) {
                     (Some(_), _, _) if self.quick => "quick terminal".to_owned(),
                     (Some(_), _, _) => "this window".to_owned(),
@@ -70,9 +81,11 @@ impl Win {
                     status,
                     preview,
                     here,
+                    group,
                 }
             })
             .collect();
+        cards.sort_by_key(|c| c.group.0);
         self.sessions = Some(Sessions {
             cards,
             ..Sessions::default()
@@ -220,6 +233,11 @@ impl Win {
             .filter_map(|&i| s.cards.get(i))
             .map(|c| (c.name.clone(), c.what.clone(), c.status.clone(), c.preview.clone()))
             .collect();
+        let groups: Vec<String> = shown
+            .iter()
+            .filter_map(|&i| s.cards.get(i))
+            .map(|c| c.group.1.clone())
+            .collect();
         let m = self.renderer.metrics();
         let scale = self.scale();
         let scheme = self.scheme;
@@ -230,8 +248,28 @@ impl Win {
         let width = (w - 48.0 * scale).min(COLUMNS as f32 * 34.0 * cw + 2.0 * pad + gap * 2.0);
         let card_w = ((width - 2.0 * pad - gap * (COLUMNS as f32 - 1.0)) / COLUMNS as f32).floor();
         let card_h = (PREVIEW as f32 + 2.6) * ch + 2.0 * pad;
-        let rows = cards.len().div_ceil(COLUMNS).max(1);
-        let height = (2.0 * ch + pad * 3.0 + rows as f32 * (card_h + gap)).min(h - 96.0 * scale);
+        // Each window's sessions start a row of their own, under its name.
+        let heading = ch + 6.0 * scale;
+        let mut spots = Vec::new();
+        let (mut col, mut sy) = (0, 0.0);
+        for (i, group) in groups.iter().enumerate() {
+            let first = i == 0 || groups[i - 1] != *group;
+            if first {
+                if i > 0 {
+                    sy += card_h + gap;
+                }
+                col = 0;
+                spots.push((None, group.clone(), sy));
+                sy += heading;
+            } else if col == COLUMNS {
+                col = 0;
+                sy += card_h + gap;
+            }
+            spots.push((Some((i, col)), String::new(), sy));
+            col += 1;
+        }
+        let used = if groups.is_empty() { card_h } else { sy + card_h + gap };
+        let height = (2.0 * ch + pad * 3.0 + used).min(h - 96.0 * scale);
         let (x, y) = (((w - width) / 2.0).round(), (h * 0.08).round());
         let panel = mix(scheme.fg(), scheme.bg(), 0.92);
         scene
@@ -275,10 +313,16 @@ impl Win {
             .push(Rect::fill(caret_x, ty, (2.0 * scale).round(), ch, scheme.accent()));
         let top = ty + ch + pad;
         let mut areas = Vec::new();
-        for (i, (name, what, status, preview)) in cards.iter().enumerate() {
-            let (col, row) = (i % COLUMNS, i / COLUMNS);
+        for (spot, group, sy) in spots {
+            let Some((i, col)) = spot else {
+                if top + sy + heading <= y + height {
+                    self.label(&group, x + pad, top + sy, muted, Style::Bold, &mut text);
+                }
+                continue;
+            };
+            let (name, what, status, preview) = &cards[i];
             let cx = x + pad + col as f32 * (card_w + gap);
-            let cy = top + row as f32 * (card_h + gap);
+            let cy = top + sy;
             if cy + card_h > y + height {
                 break;
             }
@@ -344,6 +388,36 @@ impl Win {
 }
 
 /// A screen's last non-empty lines, oldest first.
+fn panes(n: usize) -> String {
+    if n == 1 {
+        "1 pane".to_owned()
+    } else {
+        format!("{n} panes")
+    }
+}
+
+/// The heading of a session in no pane here: the other window that has it, in the order they
+/// opened, else one with no layout written yet, else none.
+fn grouped(id: &str, attached: bool, others: &[(bool, Vec<String>)]) -> (usize, String) {
+    let mut number = 0;
+    for (i, (quick, ids)) in others.iter().enumerate() {
+        number += usize::from(!quick);
+        if ids.iter().any(|s| s == id) {
+            let name = if *quick {
+                "Quick terminal".to_owned()
+            } else {
+                format!("Window {}", number + 1)
+            };
+            return (i + 1, format!("{name} · {}", panes(ids.len())));
+        }
+    }
+    if attached {
+        (usize::MAX - 1, "Another window".to_owned())
+    } else {
+        (usize::MAX, "No window".to_owned())
+    }
+}
+
 fn tail(term: &Term<crate::pane::Proxy>, count: usize) -> Vec<String> {
     lines_of(term.grid(), count)
 }
@@ -394,5 +468,22 @@ fn ago(at: SystemTime) -> String {
         60..3600 => format!("{}m ago", secs / 60),
         3600..86_400 => format!("{}h ago", secs / 3600),
         _ => format!("{}d ago", secs / 86_400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sessions_go_under_the_window_that_has_them() {
+        let ids = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let others = vec![(false, ids(&["a", "b"])), (true, ids(&["q"])), (false, ids(&["c"]))];
+        assert_eq!(grouped("b", true, &others), (1, "Window 2 · 2 panes".to_owned()));
+        assert_eq!(grouped("q", true, &others), (2, "Quick terminal · 1 pane".to_owned()));
+        assert_eq!(grouped("c", false, &others), (3, "Window 3 · 1 pane".to_owned()));
+        assert_eq!(grouped("x", true, &others).1, "Another window");
+        assert_eq!(grouped("y", false, &others).1, "No window");
+        assert!(grouped("x", true, &others).0 < grouped("y", false, &others).0);
     }
 }
