@@ -1,6 +1,6 @@
 pub type PaneId = u64;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Area {
     pub x: f32,
     pub y: f32,

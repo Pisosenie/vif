@@ -998,6 +998,15 @@ mod tests {
     }
 
     #[test]
+    fn every_fix_at_once() {
+        let src = "[cursor]\nshape = \"bem\"\n[tabs]\nposition = \"bottm\"\n";
+        let (_, diagnostics) = document(src);
+        let fixed = crate::fix_all(src, &diagnostics).unwrap();
+        assert_eq!(fixed, "[cursor]\nshape = \"beam\"\n[tabs]\nposition = \"bottom\"\n");
+        assert!(document(&fixed).1.is_empty());
+    }
+
+    #[test]
     fn choices_suggest_and_fix() {
         let src = "[cursor]\nshape = \"bem\"\n";
         let (config, diagnostics) = document(src);

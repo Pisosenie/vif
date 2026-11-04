@@ -47,6 +47,14 @@ impl Diagnostic {
     }
 }
 
+/// `src` with every fix the diagnostics offer applied, the last first so the spans before it stay
+/// true; None when one of them no longer fits.
+pub fn fix_all(src: &str, diagnostics: &[Diagnostic]) -> Option<String> {
+    let mut fixes: Vec<&Fix> = diagnostics.iter().filter_map(|d| d.fix.as_ref()).collect();
+    fixes.sort_by_key(|f| std::cmp::Reverse(f.span.start));
+    fixes.iter().try_fold(src.to_owned(), |text, fix| fix.apply(&text))
+}
+
 impl Fix {
     pub fn apply(&self, src: &str) -> Option<String> {
         let span = self.span.clone();

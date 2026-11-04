@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use vif_render::{LineCell, Rect, Scene, Style};
 
-use super::Win;
+use super::{Answer, Win};
 use crate::colors::{Rgba, Scheme, mix, rgba};
 use crate::hints::Target;
 use crate::layout::Area;
@@ -272,12 +272,18 @@ impl Win {
             return;
         };
         let lines = notice.lines.clone();
+        let buttons: Vec<Answer> = notice.buttons.iter().map(|(b, _)| *b).collect();
         let m = self.renderer.metrics();
         let scale = self.scale();
         let content = self.content();
         let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * m.cell_width + 28.0 * scale;
         let w = width.min(content.w);
-        let h = lines.len() as f32 * m.cell_height + 20.0 * scale;
+        let row = if buttons.is_empty() {
+            0.0
+        } else {
+            m.cell_height + 16.0 * scale
+        };
+        let h = lines.len() as f32 * m.cell_height + 20.0 * scale + row;
         let x = content.x + content.w - w;
         let y = content.y;
         let warn = rgba(vif_config::Rgb::hex(0xf2b35c), 1.0);
@@ -293,10 +299,51 @@ impl Win {
             self.label(&line, x + 14.0 * scale, ty, color, style, &mut panel);
             ty += m.cell_height;
         }
+        // Fix typo and Open in settings from the left, × at the right.
+        let mut drawn = Vec::new();
+        let (pad, gap) = (8.0 * scale, 8.0 * scale);
+        let by = ty + 6.0 * scale;
+        let mut bx = x + 14.0 * scale - pad;
+        for button in buttons {
+            let text = match button {
+                Answer::Fix => "Fix typo",
+                Answer::Settings => "Open in settings",
+                Answer::Close => "×",
+            };
+            let bw = text.chars().count() as f32 * m.cell_width + 2.0 * pad;
+            let at = if button == Answer::Close {
+                x + w - 14.0 * scale - bw + pad
+            } else {
+                bx
+            };
+            let area = Area {
+                x: at,
+                y: by - 3.0 * scale,
+                w: bw,
+                h: m.cell_height + 6.0 * scale,
+            };
+            if button != Answer::Close {
+                let chip = mix(self.scheme.bg(), warn, 0.32);
+                panel
+                    .front
+                    .push(Rect::fill(area.x, area.y, area.w, area.h, chip).rounded(4.0 * scale));
+                bx += bw + gap;
+            }
+            let color = if button == Answer::Close {
+                self.scheme.fg()
+            } else {
+                warn
+            };
+            self.label(text, at + pad, by, color, Style::Bold, &mut panel);
+            drawn.push((button, area));
+        }
         scene.front.extend(panel.front);
         scene.over.extend(panel.mask);
         if let Some(n) = &mut self.notice {
             n.area = Area { x, y, w, h };
+            if !drawn.is_empty() {
+                n.buttons = drawn;
+            }
         }
     }
 }

@@ -10,8 +10,8 @@ pub mod themes;
 use std::path::PathBuf;
 use std::{env, fs, io};
 
-pub use diagnostic::{Diagnostic, Fix, report};
-pub use edit::Editor;
+pub use diagnostic::{Diagnostic, Fix, fix_all, report};
+pub use edit::{Editor, setting_changed};
 pub use read::known;
 pub use theme::{Palette, Rgb};
 

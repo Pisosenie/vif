@@ -157,6 +157,14 @@ impl Win {
             if let Some(notice) = &self.notice
                 && notice.area.contains(x, y)
             {
+                let answer = notice.buttons.iter().find(|(_, a)| a.contains(x, y)).map(|(b, _)| *b);
+                match answer {
+                    Some(Answer::Fix) => fix_config(),
+                    Some(Answer::Settings) => open_settings(None),
+                    // The rest of a config notice stays until it's answered or times out.
+                    None if !notice.buttons.is_empty() => return,
+                    _ => {}
+                }
                 self.notice = None;
                 self.window.request_redraw();
                 return;
@@ -314,6 +322,21 @@ impl Win {
             pane.scroll(Scroll::Delta(lines));
             self.window.request_redraw();
         }
+    }
+}
+
+/// Writes every fix vif.toml's problems offer into it; the change brings the windows the new
+/// config the way any edit does.
+fn fix_config() {
+    let path = vif_config::path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let (_, diagnostics) = Config::parse(&text);
+    if let Some(fixed) = vif_config::fix_all(&text, &diagnostics)
+        && let Err(err) = std::fs::write(&path, fixed)
+    {
+        log::warn!("can't fix {}: {err}", path.display());
     }
 }
 
