@@ -4,6 +4,7 @@ mod gallery;
 mod greeting;
 mod more;
 mod preview;
+mod search;
 mod style;
 
 use std::collections::{BTreeSet, HashMap};
@@ -218,6 +219,7 @@ enum Message {
     Families(Vec<String>),
     Key(keyboard::Event),
     More(more::Change),
+    Query(String),
     Greet(greeting::Change),
 }
 
@@ -242,6 +244,10 @@ struct Settings {
     error: Option<String>,
     gallery: Vec<gallery::Card>,
     gallery_stamp: Option<SystemTime>,
+    /// What the search field above the pages holds.
+    query: String,
+    /// The setting the last change made, and what it was before.
+    was: Option<(String, Option<String>)>,
 }
 
 fn modified(path: &PathBuf) -> Option<SystemTime> {
@@ -273,6 +279,8 @@ impl Settings {
             error: None,
             gallery: gallery::cards(),
             gallery_stamp: gallery::stamp(),
+            query: String::new(),
+            was: None,
         };
         settings.reparse();
         let families = Task::perform(async { monospace_families() }, Message::Families);
@@ -297,8 +305,10 @@ impl Settings {
         if editor.text() == before {
             return;
         }
+        let was = vif_config::setting_changed(&before, &editor.text());
         match editor.save() {
             Ok(range) => {
+                self.was = was;
                 self.undo.push(before);
                 self.redo.clear();
                 self.changed = Some(range);
@@ -311,6 +321,7 @@ impl Settings {
     }
 
     fn replace(&mut self, text: String) {
+        self.was = None;
         match Editor::parse(&text) {
             Ok(mut editor) => {
                 editor.set_path(&self.path);
@@ -328,7 +339,11 @@ impl Settings {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Page(page) => self.page = page,
+            Message::Page(page) => {
+                self.page = page;
+                self.query.clear();
+            }
+            Message::Query(query) => self.query = query,
             Message::More(change) => self.change(change),
             Message::Greet(change) => return self.greet(change),
             Message::Family(family) => self.edit(|e| e.set("font", "family", family)),
@@ -492,10 +507,7 @@ impl Settings {
             Message::FixAll => {
                 if let Ok(editor) = &self.editor {
                     let before = editor.text();
-                    let mut fixes: Vec<_> = self.diagnostics.iter().filter_map(|d| d.fix.clone()).collect();
-                    fixes.sort_by_key(|f| std::cmp::Reverse(f.span.start));
-                    let text = fixes.iter().try_fold(before.clone(), |text, fix| fix.apply(&text));
-                    if let Some(text) = text {
+                    if let Some(text) = vif_config::fix_all(&before, &self.diagnostics) {
                         self.undo.push(before);
                         self.replace(text);
                     }
@@ -551,6 +563,9 @@ impl Settings {
                 }
             }
             Message::Key(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                    self.query.clear();
+                }
                 let undo = matches!(key.as_ref(), keyboard::Key::Character("z" | "я")) && modifiers.command();
                 if undo && modifiers.shift() {
                     return self.update(Message::Redo);
@@ -594,15 +609,44 @@ impl Settings {
             .width(if narrow { 150 } else { 196 });
         nav = nav
             .push(container(text("vif").size(20).font(style::mono_bold()).color(style::rgb(accent))).padding([4, 12]));
-        nav = nav.push(space::vertical().height(14));
-        for page in Page::ALL {
-            nav = nav.push(
-                button(text(page.title()).size(14).font(style::medium()))
-                    .width(Fill)
-                    .padding([9, 12])
-                    .style(style::nav(page == self.page, accent))
-                    .on_press(Message::Page(page)),
-            );
+        nav = nav.push(space::vertical().height(10));
+        nav = nav.push(
+            text_input("Search settings", &self.query)
+                .on_input(Message::Query)
+                .size(13)
+                .padding([7, 10])
+                .style(style::input),
+        );
+        nav = nav.push(space::vertical().height(8));
+        if self.query.trim().is_empty() {
+            for page in Page::ALL {
+                nav = nav.push(
+                    button(text(page.title()).size(14).font(style::medium()))
+                        .width(Fill)
+                        .padding([9, 12])
+                        .style(style::nav(page == self.page, accent))
+                        .on_press(Message::Page(page)),
+                );
+            }
+        } else {
+            let hits = search::find(&self.query, 14);
+            if hits.is_empty() {
+                nav = nav.push(container(text("Nothing by that name").size(13).color(style::faint())).padding([9, 12]));
+            }
+            for hit in hits {
+                let label = column![
+                    text(hit.label).size(13).font(MONO),
+                    text(hit.page.title()).size(11).color(style::faint()),
+                ]
+                .spacing(1);
+                nav = nav.push(
+                    button(label)
+                        .width(Fill)
+                        .padding([6, 12])
+                        .style(style::nav(false, accent))
+                        .on_press(Message::Page(hit.page)),
+                );
+            }
         }
         let sidebar = container(nav).height(Fill).style(style::sidebar);
 
@@ -655,7 +699,15 @@ impl Settings {
                 .style(style::ghost)
                 .on_press_maybe(enabled.then_some(message))
         };
+        let was = self.was.as_ref().map(|(key, old)| {
+            let old = old.as_deref().unwrap_or("not set");
+            text(format!("{key} was {old}"))
+                .size(12)
+                .font(MONO)
+                .color(style::faint())
+        });
         row![
+            container(was).padding([9, 6]),
             item("Undo", !self.undo.is_empty(), Message::Undo),
             item("Redo", !self.redo.is_empty(), Message::Redo),
             item("Open file", true, Message::Open),

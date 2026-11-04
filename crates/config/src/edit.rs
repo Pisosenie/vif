@@ -6,6 +6,47 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::Rgb;
 
+/// The first setting that differs between two versions of vif.toml, as `section.key`, with what
+/// it was before (None when it wasn't set).
+pub fn setting_changed(before: &str, after: &str) -> Option<(String, Option<String>)> {
+    let (old, new) = (before.parse::<DocumentMut>().ok()?, after.parse::<DocumentMut>().ok()?);
+    let mut out = None;
+    diff("", old.as_table(), new.as_table(), &mut out);
+    out
+}
+
+fn diff(path: &str, old: &Table, new: &Table, out: &mut Option<(String, Option<String>)>) {
+    // The value alone, without the spaces and comment around it.
+    let shown = |item: &Item| {
+        item.as_value().map(|v| {
+            let mut v = v.clone();
+            v.decor_mut().clear();
+            v.to_string()
+        })
+    };
+    let keys = new.iter().map(|(k, _)| k).chain(old.iter().map(|(k, _)| k));
+    for key in keys {
+        if out.is_some() {
+            return;
+        }
+        let name = if path.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{path}.{key}")
+        };
+        match (old.get(key), new.get(key)) {
+            (Some(Item::Table(a)), Some(Item::Table(b))) => diff(&name, a, b, out),
+            (a, b) if a.and_then(shown) != b.and_then(shown) => {
+                let was_table = a.is_some_and(Item::is_table) || b.is_some_and(Item::is_table);
+                if !was_table {
+                    *out = Some((name, a.and_then(shown)));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Edits vif.toml in place: comments, order and formatting of untouched lines stay.
 #[derive(Debug)]
 pub struct Editor {
@@ -230,6 +271,19 @@ fn changed(old: &str, new: &str) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_setting_that_changed_and_what_it_was() {
+        let before = "[font]\nsize = 13 # mine\nfamily = \"x\"\n[window]\nopacity = 1.0\n";
+        let after = "[font]\nsize = 14.5 # mine\nfamily = \"x\"\n[window]\nopacity = 1.0\n";
+        assert_eq!(
+            setting_changed(before, after),
+            Some(("font.size".to_owned(), Some("13".to_owned())))
+        );
+        let added = "[font]\nsize = 13 # mine\nfamily = \"x\"\n[window]\nopacity = 1.0\nblur = 8\n";
+        assert_eq!(setting_changed(before, added), Some(("window.blur".to_owned(), None)));
+        assert_eq!(setting_changed(before, before), None);
+    }
 
     #[test]
     fn rules_and_lists_edit_in_place() {
