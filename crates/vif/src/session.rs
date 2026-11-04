@@ -86,6 +86,20 @@ pub fn start_as(spec: &Spec, id: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Tells a host its terminal's new size, over its control socket.
+pub fn resize(mut ctl: &UnixStream, size: WindowSize) {
+    let line = format!(
+        "resize {} {} {} {}\n",
+        size.num_cols, size.num_lines, size.cell_width, size.cell_height
+    );
+    let _ = ctl.write_all(line.as_bytes());
+}
+
+/// Whether a host's control socket is there, without asking it anything.
+pub fn listening(id: &str) -> bool {
+    socket(id, "ctl").exists()
+}
+
 /// The data and control sockets of a running host, for a bridge that isn't a window.
 pub fn connect(id: &str) -> io::Result<(UnixStream, UnixStream)> {
     let (ctl, _) = hello(id)?;
@@ -333,11 +347,7 @@ impl Link {
 
 impl OnResize for Link {
     fn on_resize(&mut self, size: WindowSize) {
-        let line = format!(
-            "resize {} {} {} {}\n",
-            size.num_cols, size.num_lines, size.cell_width, size.cell_height
-        );
-        let _ = self.ctl.write_all(line.as_bytes());
+        resize(&self.ctl, size);
     }
 }
 
@@ -386,16 +396,6 @@ fn serve(args: &[String]) -> io::Result<i32> {
     };
     let pty = tty::new(&options, size, 0)?;
     let pid = pty.child().id();
-    // SIGTERM goes to one thread of its own, which every thread started after this leaves it to; the shell, started
-    // before, keeps SIGTERM as usual.
-    // SAFETY: the set is ours and starts empty; the mask is this thread's, inherited by new ones.
-    let stop = unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGTERM);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        set
-    };
     let mut master = pty.file().try_clone()?;
     let input = pty.file().try_clone()?;
     // This host reads with blocking calls on threads of its own.
@@ -409,17 +409,14 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let state = Arc::new(Mutex::new(State::default()));
 
     // The machine going down stops every process: what this shell printed last is kept, so the
-    // window that comes back after the restart can show it above a new shell.
+    // window that comes back after the restart can show it above a new shell. The shell, started
+    // before this, keeps SIGTERM as usual.
     let (kept, keep_id) = (state.clone(), id.clone());
-    std::thread::spawn(move || {
-        let mut signal = 0;
-        // SAFETY: waits on the set made above, with SIGTERM blocked so only this call takes it.
-        if unsafe { libc::sigwait(&stop, &mut signal) } == 0 {
-            let ring: Vec<u8> = kept.lock().expect("state").ring.iter().copied().collect();
-            keep_output(&keep_id, &ring);
-            // SAFETY: kill only sends a signal, to the shell this host started.
-            unsafe { libc::kill(pid as i32, libc::SIGHUP) };
-        }
+    crate::tty::on_signal(libc::SIGTERM, move || {
+        let ring: Vec<u8> = kept.lock().expect("state").ring.iter().copied().collect();
+        keep_output(&keep_id, &ring);
+        // SAFETY: kill only sends a signal, to the shell this host started.
+        unsafe { libc::kill(pid as i32, libc::SIGHUP) };
     });
 
     let (data_path, ctl_path) = (socket(id, "data"), socket(id, "ctl"));

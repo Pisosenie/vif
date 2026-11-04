@@ -131,16 +131,7 @@ pub fn remote(args: &[String]) -> ExitCode {
 /// The shell for a new remote session, set up as a window here would set it up.
 fn spec() -> Spec {
     let (config, _) = Config::load();
-    let (term, terminfo) = crate::terminfo::setup(&config.terminal.term);
-    let mut env = std::collections::HashMap::from([
-        ("TERM".to_owned(), term),
-        ("COLORTERM".to_owned(), "truecolor".to_owned()),
-        ("TERM_PROGRAM".to_owned(), "vif".to_owned()),
-        ("TERM_PROGRAM_VERSION".to_owned(), env!("CARGO_PKG_VERSION").to_owned()),
-    ]);
-    if let Some(dir) = terminfo {
-        env.insert("TERMINFO".to_owned(), dir.display().to_string());
-    }
+    let mut env = crate::shell::env(&crate::terminfo::setup(&config.terminal.term));
     let program = crate::shell::prepare(&config, &mut env);
     let size = size();
     Spec {
@@ -153,82 +144,36 @@ fn spec() -> Spec {
 }
 
 fn size() -> libc::winsize {
-    // SAFETY: a C struct of plain numbers, for which all zeroes is a valid value.
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    // SAFETY: TIOCGWINSZ fills the winsize we pass.
-    if unsafe { libc::ioctl(libc::STDIN_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 || size.ws_col == 0 {
-        size.ws_col = 80;
-        size.ws_row = 24;
-    }
-    size
+    crate::tty::size(libc::STDIN_FILENO).unwrap_or(libc::winsize {
+        ws_col: 80,
+        ws_row: 24,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    })
 }
 
-fn tell_size(mut ctl: &UnixStream) {
+fn tell_size(ctl: &UnixStream) {
     let s = size();
     let cell = |px: u16, n: u16| px.checked_div(n).unwrap_or(0);
-    let line = format!(
-        "resize {} {} {} {}\n",
-        s.ws_col,
-        s.ws_row,
-        cell(s.ws_xpixel, s.ws_col),
-        cell(s.ws_ypixel, s.ws_row)
-    );
-    let _ = ctl.write_all(line.as_bytes());
-}
-
-/// This terminal in raw mode while it lasts, so every key goes to the shell over there.
-struct Raw(Option<libc::termios>);
-
-impl Raw {
-    fn enter() -> Self {
-        // SAFETY: a C struct of plain numbers, for which all zeroes is a valid value.
-        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        // SAFETY: tcgetattr fills the termios we pass; failure, as with no terminal, is checked.
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) } != 0 {
-            return Self(None);
-        }
-        let mut raw = saved;
-        // SAFETY: cfmakeraw changes the flags of the termios we pass, and tcsetattr applies it.
-        unsafe {
-            libc::cfmakeraw(&mut raw);
-            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw);
-        }
-        Self(Some(saved))
-    }
-}
-
-impl Drop for Raw {
-    fn drop(&mut self) {
-        if let Some(saved) = &self.0 {
-            // SAFETY: the termios as tcgetattr gave it.
-            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved) };
-        }
-    }
+    let size = alacritty_terminal::event::WindowSize {
+        num_cols: s.ws_col,
+        num_lines: s.ws_row,
+        cell_width: cell(s.ws_xpixel, s.ws_col),
+        cell_height: cell(s.ws_ypixel, s.ws_row),
+    };
+    session::resize(ctl, size);
 }
 
 /// Passes keys to the session and its output back until either side ends; 0 when the shell
 /// ended, [`TAKEN`] when another connection took it over.
 fn bridge(id: &str) -> io::Result<i32> {
     let (mut data, ctl) = session::connect(id)?;
-    let raw = Raw::enter();
+    // Raw, so every key goes to the shell over there.
+    // SAFETY: cfmakeraw only changes the flags of the termios it's given.
+    let raw = crate::tty::Modes::change(|t| unsafe { libc::cfmakeraw(t) });
     tell_size(&ctl);
-    // Size changes reach one thread of their own, which every thread after this leaves them to.
-    // SAFETY: the set is ours and starts empty; the mask is this thread's, inherited by new ones.
-    let winch = unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGWINCH);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        set
-    };
     let resizes = ctl.try_clone()?;
-    std::thread::spawn(move || {
-        let mut signal = 0;
-        // SAFETY: waits on the set made above, with SIGWINCH blocked so only this call takes it.
-        while unsafe { libc::sigwait(&winch, &mut signal) } == 0 {
-            tell_size(&resizes);
-        }
-    });
+    crate::tty::on_signal(libc::SIGWINCH, move || tell_size(&resizes));
     let mut keys = data.try_clone()?;
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];

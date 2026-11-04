@@ -139,12 +139,9 @@ pub(crate) fn decode(data: &[u8], blocks: bool, mono: bool, room: (usize, usize)
 
 /// The terminal's columns and lines, and how many times taller than wide a cell is.
 pub(crate) fn screen() -> (usize, usize, f64) {
-    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    // SAFETY: TIOCGWINSZ fills the winsize we pass.
-    if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 || size.ws_col == 0 {
+    let Some(size) = crate::tty::size(libc::STDOUT_FILENO) else {
         return (80, 24, 2.0);
-    }
+    };
     let (cols, rows) = (usize::from(size.ws_col), usize::from(size.ws_row));
     let cell = if size.ws_xpixel > 0 && size.ws_ypixel > 0 {
         (f64::from(size.ws_ypixel) / rows as f64) / (f64::from(size.ws_xpixel) / cols as f64)
@@ -366,18 +363,12 @@ fn run_frames(frames: &[Frame], cols: usize, rows: usize, once: bool) -> Result<
         libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
     }
     // Keys go to this, not onto the screen, and don't wait for Enter.
-    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
-    let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-    // SAFETY: tcgetattr fills the termios we pass; failure is checked.
-    let quiet = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) } == 0;
-    if quiet {
-        let mut raw = saved;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO);
-        raw.c_cc[libc::VMIN] = 0;
-        raw.c_cc[libc::VTIME] = 0;
-        // SAFETY: the termios tcgetattr filled, with only its flags changed.
-        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) };
-    }
+    let modes = crate::tty::Modes::change(|t| {
+        t.c_lflag &= !(libc::ICANON | libc::ECHO);
+        t.c_cc[libc::VMIN] = 0;
+        t.c_cc[libc::VTIME] = 0;
+    });
+    let quiet = modes.is_some();
     let mut out = io::stdout().lock();
     let _ = out.write_all(b"\x1b[?1049h\x1b[?25l\x1b[2J");
     let mut shown: Vec<&str> = vec![""; rows];
@@ -432,10 +423,6 @@ fn run_frames(frames: &[Frame], cols: usize, rows: usize, once: bool) -> Result<
     }
     let _ = out.write_all(b"\x1b[0m\x1b[?25h\x1b[?1049l");
     let _ = out.flush();
-    if quiet {
-        // SAFETY: the termios as tcgetattr gave it.
-        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved) };
-    }
     Ok(())
 }
 

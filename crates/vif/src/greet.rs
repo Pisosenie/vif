@@ -96,16 +96,7 @@ fn show(clip: Option<&Clip>, info: &[(String, usize)], loops: u8) {
         libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
     }
     // Keys typed meanwhile wait for the prompt instead of landing on the picture.
-    // SAFETY: a C struct of plain numbers and arrays, for which all zeroes is a valid value.
-    let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-    // SAFETY: tcgetattr fills the termios we pass; failure is checked.
-    let quiet = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) } == 0;
-    if quiet {
-        let mut still = saved;
-        still.c_lflag &= !libc::ECHO;
-        // SAFETY: the termios tcgetattr filled, with only echo turned off.
-        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &still) };
-    }
+    let modes = crate::tty::Modes::change(|t| t.c_lflag &= !libc::ECHO);
     let mut out = io::stdout().lock();
     let at = |line: usize, col: usize| {
         let down = if line > 0 {
@@ -127,10 +118,7 @@ fn show(clip: Option<&Clip>, info: &[(String, usize)], loops: u8) {
     }
     let _ = write!(out, "\x1b[0m\x1b8\x1b[{rows}B\r\n\x1b[?25h");
     let _ = out.flush();
-    if quiet {
-        // SAFETY: the termios as tcgetattr gave it.
-        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved) };
-    }
+    drop(modes);
 }
 
 /// Writes the frames that differ from what's there, in the GIF's own time.

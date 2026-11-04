@@ -36,6 +36,7 @@ mod session;
 mod shell;
 mod terminfo;
 mod theme;
+mod tty;
 mod wallpaper;
 mod window;
 
