@@ -1,6 +1,6 @@
 pkgbase = vif
 	pkgdesc = A fast GPU terminal with themes, command blocks and shells that outlive the window
-	pkgver = 0.1.2
+	pkgver = 0.1.3
 	pkgrel = 1
 	url = https://github.com/Pisosenie/vif
 	arch = x86_64
@@ -24,7 +24,7 @@ pkgbase = vif
 	optdepends = libxi: running under X11
 	optdepends = libxrandr: running under X11
 	optdepends = libxkbcommon-x11: running under X11
-	source = vif::git+https://github.com/Pisosenie/vif.git#tag=v0.1.2
+	source = vif::git+https://github.com/Pisosenie/vif.git#tag=v0.1.3
 	sha256sums = SKIP
 
 pkgname = vif
