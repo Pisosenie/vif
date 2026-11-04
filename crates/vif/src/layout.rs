@@ -220,6 +220,11 @@ fn clamp_ratio(ratio: f32) -> f32 {
     ratio.clamp(0.1, 0.9)
 }
 
+/// Where a pane split off from one in `area` goes: its second half.
+pub fn split_off(area: Area, gap: f32, across: bool) -> Area {
+    parts(area, gap, across, 0.5).2
+}
+
 /// The first side, the gap and the second side of `area` split at `ratio`.
 fn parts(area: Area, gap: f32, across: bool, ratio: f32) -> (Area, Area, Area) {
     if across {

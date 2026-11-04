@@ -572,41 +572,36 @@ impl Win {
     }
 
     /// Panes for `shape`: its sessions taken over, or with `fresh`, new shells in the folders
-    /// the old ones were in, under what those printed last.
+    /// the old ones were in, under what those printed last. The splits are laid out first, so
+    /// every pane starts at the size it will have.
     fn build(
         &mut self,
         shared: &Shared,
         shape: Shape,
         fresh: Option<&std::collections::BTreeMap<String, PathBuf>>,
     ) -> Option<Node> {
-        match shape {
-            Shape::Pane(session) if fresh.is_some() => {
-                let cwd = fresh.and_then(|places| places.get(&session)).cloned();
-                let before = layouts::last_output(&session);
-                self.spawn_with(shared, None, cwd, None, before).ok().map(Node::Pane)
-            }
-            Shape::Pane(session) => match self.spawn_pane(shared, None, None, Some(session)) {
-                Ok(id) => Some(Node::Pane(id)),
-                Err(err) => {
-                    log::warn!("can't take a session back: {err}");
-                    None
+        let mut sessions = Vec::new();
+        let mut root = plan(shape, &mut sessions);
+        let mut areas = Vec::new();
+        root.layout(self.content(), self.gap(), &mut areas);
+        for (id, session) in sessions {
+            let area = areas.iter().find(|(p, _)| *p == id).map_or(self.content(), |(_, a)| *a);
+            let spawned = match fresh {
+                Some(places) => {
+                    let cwd = places.get(&session).cloned();
+                    let before = layouts::last_output(&session);
+                    self.spawn_with(id, area, shared, None, cwd, None, before)
                 }
-            },
-            Shape::Split {
-                across,
-                ratio,
-                first,
-                second,
-            } => match (self.build(shared, *first, fresh), self.build(shared, *second, fresh)) {
-                (Some(first), Some(second)) => Some(Node::Split {
-                    across,
-                    ratio,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }),
-                (one, other) => one.or(other),
-            },
+                None => self.spawn_with(id, area, shared, None, None, Some(session), None),
+            };
+            if let Err(err) = spawned {
+                log::warn!("can't take a session back: {err}");
+                if !root.remove(id) {
+                    return None;
+                }
+            }
         }
+        Some(root)
     }
 
     fn spawn_pane(
@@ -616,18 +611,23 @@ impl Win {
         cwd: Option<PathBuf>,
         attach: Option<String>,
     ) -> std::io::Result<PaneId> {
-        self.spawn_with(shared, run, cwd, attach, None)
+        let id = crate::app::next_pane();
+        self.spawn_with(id, self.content(), shared, run, cwd, attach, None)?;
+        Ok(id)
     }
 
+    /// A pane started at the size of `area`, so what its shell draws first fits.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_with(
         &mut self,
+        id: PaneId,
+        area: Area,
         shared: &Shared,
         run: Option<&[String]>,
         cwd: Option<PathBuf>,
         attach: Option<String>,
         before: Option<Vec<u8>>,
-    ) -> std::io::Result<PaneId> {
-        let id = crate::app::next_pane();
+    ) -> std::io::Result<()> {
         let spawn = Spawn {
             config: &self.config,
             cwd: cwd.or_else(|| self.focused_pane().and_then(Pane::cwd)),
@@ -639,9 +639,9 @@ impl Win {
             first: self.panes.is_empty(),
             before,
         };
-        let pane = Pane::spawn(id, spawn, self.content(), self.renderer.metrics())?;
+        let pane = Pane::spawn(id, spawn, area, self.renderer.metrics())?;
         self.panes.insert(id, pane);
-        Ok(id)
+        Ok(())
     }
 
     fn new_tab(&mut self, shared: &Shared) -> std::io::Result<()> {
@@ -690,16 +690,26 @@ impl Win {
     }
 
     fn split(&mut self, shared: &Shared, across: bool) {
-        let Some(focus) = self.tabs.get(self.active).map(|t| t.focus) else {
+        let Some(tab) = self.tabs.get_mut(self.active) else {
             return;
         };
-        let Ok(id) = self.spawn_pane(shared, None, None, None) else {
+        let focus = tab.focus;
+        if std::mem::take(&mut tab.zoomed) {
+            self.relayout();
+        }
+        let from = self
+            .areas
+            .iter()
+            .find(|(p, _)| *p == focus)
+            .map_or(self.content(), |(_, a)| *a);
+        let id = crate::app::next_pane();
+        let area = crate::layout::split_off(from, self.gap(), across);
+        if self.spawn_with(id, area, shared, None, None, None, None).is_err() {
             return;
-        };
+        }
         let tab = &mut self.tabs[self.active];
         tab.root.split(focus, id, across);
         tab.focus = id;
-        tab.zoomed = false;
         self.relayout();
     }
 
@@ -1421,5 +1431,27 @@ fn first_session(shape: &Shape) -> String {
     match shape {
         Shape::Pane(id) => id.clone(),
         Shape::Split { first, .. } => first_session(first),
+    }
+}
+
+/// The splits of `shape` with a new pane id for each session, which `sessions` gets in order.
+fn plan(shape: Shape, sessions: &mut Vec<(PaneId, String)>) -> Node {
+    match shape {
+        Shape::Pane(session) => {
+            let id = crate::app::next_pane();
+            sessions.push((id, session));
+            Node::Pane(id)
+        }
+        Shape::Split {
+            across,
+            ratio,
+            first,
+            second,
+        } => Node::Split {
+            across,
+            ratio,
+            first: Box::new(plan(*first, sessions)),
+            second: Box::new(plan(*second, sessions)),
+        },
     }
 }
