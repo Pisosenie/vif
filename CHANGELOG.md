@@ -2,11 +2,18 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
-## Unreleased
+## 0.1.4 — 2026-11-04
 
 ### Added
 
+- Linux numbers in the README next to Alacritty, kitty and foot, with `bench/linux.sh` to make them.
 - A Debian package with every release, for Debian 12, Ubuntu 22.04 and newer on amd64 and arm64: `sudo apt install ./vif_<version>_<arch>.deb` brings what vif needs with it.
+
+### Fixed
+
+- A new split, and the panes of a window coming back, started at the whole window's size and shrank a moment later; zsh's mark for a line without a newline was left behind as a stray `%`, with the prompt pushed over. Panes now start at the size they'll have.
+- Output shown again after a restart no longer carries those marks from the width it was printed at.
+- The AI panel shows a suggested command in color instead of between its ``` fences.
 
 ## 0.1.3 — 2026-11-04
 
