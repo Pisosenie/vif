@@ -45,13 +45,24 @@ fn socket(id: &str, kind: &str) -> PathBuf {
 
 /// Starts a host for a new shell; returns its id once it listens.
 pub fn start(spec: &Spec) -> io::Result<String> {
-    crate::private::made("vif-sessions")?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let id = format!("{:x}", (nanos as u64) ^ (u64::from(std::process::id()) << 40));
+    start_as(spec, &id)?;
+    Ok(id)
+}
+
+/// Whether a host answers for `id`.
+pub fn alive(id: &str) -> bool {
+    hello(id).is_ok()
+}
+
+/// Starts a host under an id of the caller's choosing, and waits until it listens.
+pub fn start_as(spec: &Spec, id: &str) -> io::Result<()> {
+    crate::private::made("vif-sessions")?;
     let spec = serde_json::to_string(spec).map_err(io::Error::other)?;
     let mut command = Command::new(std::env::current_exe()?);
     command
-        .args(["session-host", &id, &spec])
+        .args(["session-host", id, &spec])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -65,14 +76,20 @@ pub fn start(spec: &Spec) -> io::Result<String> {
     }
     let mut child = command.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(3);
-    while !socket(&id, "ctl").exists() {
+    while !socket(id, "ctl").exists() {
         if child.try_wait()?.is_some() || Instant::now() > deadline {
             return Err(io::Error::other("the session host didn't start"));
         }
         std::thread::sleep(Duration::from_millis(2));
     }
     std::thread::spawn(move || child.wait());
-    Ok(id)
+    Ok(())
+}
+
+/// The data and control sockets of a running host, for a bridge that isn't a window.
+pub fn connect(id: &str) -> io::Result<(UnixStream, UnixStream)> {
+    let (ctl, _) = hello(id)?;
+    Ok((UnixStream::connect(socket(id, "data"))?, ctl))
 }
 
 /// What a host says first: its shell, that shell's terminal, whether a window has it, and since

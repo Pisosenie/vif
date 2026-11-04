@@ -28,6 +28,7 @@ mod pane;
 mod private;
 mod process;
 mod quick;
+mod remote;
 mod rules;
 mod secrets;
 mod session;
@@ -89,12 +90,20 @@ pub fn main() -> ExitCode {
             run(None, None, true)
         }
         Some("session-host") => session::host(&args[1..]),
+        Some("ssh") => remote::ssh(&args[1..]),
+        Some("remote") => remote::remote(&args[1..]),
         Some("--version" | "-V") => {
             println!("vif {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
-            println!("{USAGE}\n{}\n{}\n{}", theme::USAGE, gifplay::USAGE, greet::USAGE);
+            println!(
+                "{USAGE}\n{}\n{}\n{}\n{}",
+                theme::USAGE,
+                remote::USAGE,
+                gifplay::USAGE,
+                greet::USAGE
+            );
             ExitCode::SUCCESS
         }
         Some("-e" | "--command") if args.len() > 1 => run(Some(args[1..].to_vec()), None, false),
