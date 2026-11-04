@@ -62,6 +62,31 @@ impl Win {
         self.window.request_redraw();
     }
 
+    /// Brings a finished command into view, picked, in its tab, with the window in front.
+    pub fn show_block(&mut self, id: PaneId, block: u32) {
+        let Some(index) = self.tabs.iter().position(|t| t.contains(id)) else {
+            return;
+        };
+        if index != self.active {
+            self.active = index;
+            self.relayout();
+            self.update_title();
+        }
+        self.focus(id);
+        if let Some(pane) = self.panes.get_mut(&id)
+            && let Some((top, bottom)) = pane.span(block)
+        {
+            pane.reveal(top, bottom);
+            self.block = Some(BlockMode {
+                pane: id,
+                id: block,
+                buttons: Vec::new(),
+            });
+        }
+        self.window.focus_window();
+        self.window.request_redraw();
+    }
+
     pub(super) fn leave_blocks(&mut self) {
         if let Some(mode) = self.block.take()
             && let Some(pane) = self.panes.get_mut(&mode.pane)

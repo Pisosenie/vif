@@ -1,8 +1,27 @@
 //! Desktop notifications, through what the system already has.
 
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
-pub fn send(title: &str, body: &str) {
+/// Something to do when the notification's Show button is pressed.
+pub type Show = Box<dyn FnOnce() + Send>;
+
+/// Whether this notify-send can put buttons on a notification and say which was pressed.
+fn buttons() -> bool {
+    static CAN: OnceLock<bool> = OnceLock::new();
+    *CAN.get_or_init(|| {
+        Command::new("notify-send")
+            .arg("--help")
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("--action"))
+    })
+}
+
+/// Shows a notification. Where the notifications can have buttons (on Linux, with a daemon like
+/// mako or swaync), it has Show block and Dismiss, and `show` runs when Show block is pressed.
+pub fn send(title: &str, body: &str, show: Option<Show>) {
+    let show = show.filter(|_| cfg!(target_os = "linux") && buttons());
     let mut command = if cfg!(target_os = "macos") {
         let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
         let mut c = Command::new("osascript");
@@ -14,17 +33,31 @@ pub fn send(title: &str, body: &str) {
         c
     } else {
         let mut c = Command::new("notify-send");
-        c.args(["--app-name=vif", "--icon=vif", title, body]);
+        c.args(["--app-name=vif", "--icon=vif"]);
+        if show.is_some() {
+            c.args(["--action=show=Show block", "--action=dismiss=Dismiss", "--wait"]);
+        }
+        c.args([title, body]);
         c
     };
     let spawned = command
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(if show.is_some() { Stdio::piped() } else { Stdio::null() })
         .stderr(Stdio::null())
         .spawn();
     match spawned {
         Ok(mut child) => {
-            std::thread::spawn(move || child.wait());
+            std::thread::spawn(move || {
+                // notify-send waits for an answer and prints the button's name.
+                let mut answer = String::new();
+                if let Some(out) = child.stdout.as_mut() {
+                    let _ = out.read_to_string(&mut answer);
+                }
+                let _ = child.wait();
+                if let Some(show) = show.filter(|_| answer.trim() == "show") {
+                    show();
+                }
+            });
         }
         Err(err) => log::warn!("can't notify: {err}"),
     }
