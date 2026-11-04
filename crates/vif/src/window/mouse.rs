@@ -215,7 +215,12 @@ impl Win {
                     self.open_target(target, cwd, shared);
                 }
                 None => {
-                    let _ = open::that_detached(link.uri);
+                    let cwd = self
+                        .panes
+                        .get(&link.pane)
+                        .and_then(|p| p.last_location())
+                        .and_then(|p| p.cwd);
+                    self.open_link(&link.uri, cwd, shared);
                 }
             }
             return;

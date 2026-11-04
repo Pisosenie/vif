@@ -46,10 +46,14 @@ impl Target {
     /// What picking it does, in a few words: "open atlas.rs at 118 in nvim".
     pub fn describe(&self) -> String {
         match &self.kind {
-            Kind::Url => {
-                let rest = self.text.split_once("://").map_or(self.text.as_str(), |(_, r)| r);
-                format!("open {} in the browser", short(rest, 40))
-            }
+            Kind::Url => match link_kind(&self.text) {
+                LinkKind::Web => {
+                    let rest = self.text.split_once("://").map_or(self.text.as_str(), |(_, r)| r);
+                    format!("open {} in the browser", short(rest, 40))
+                }
+                LinkKind::File(path) => format!("open {}", name(&path)),
+                LinkKind::Other(_) => format!("copy {}", short(&self.text, 40)),
+            },
             Kind::Path { path, .. } if path.is_dir() => format!("open a shell in {}", name(path)),
             Kind::Path { path, line: Some(line) } => format!("open {} at {line} in {}", name(path), editor()),
             Kind::Path { path, line: None } => format!("open {} in {}", name(path), editor()),
@@ -275,9 +279,36 @@ fn path(text: &str, has_line: bool, cwd: Option<&Path>) -> Option<PathBuf> {
     let full = match text.strip_prefix("~/") {
         Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest))?,
         None if text.starts_with('/') => PathBuf::from(text),
-        None => cwd.map_or_else(|| PathBuf::from(text), |cwd| cwd.join(text)),
+        // Never bare, so one starting with "-" can't pass for an option.
+        None => cwd.map_or_else(|| Path::new(".").join(text), |cwd| cwd.join(text)),
     };
     (explicit || has_line || full.exists()).then_some(full)
+}
+
+/// What a link is to vif, by its scheme.
+#[derive(Debug, PartialEq)]
+pub enum LinkKind {
+    /// The system's opener takes it: http, https, mailto, ftp.
+    Web,
+    /// A file on this machine, opened as a path; `file://host/…` names it by host too.
+    File(PathBuf),
+    /// Anything else, which could start an app behind text that looks like a web link.
+    Other(String),
+}
+
+pub fn link_kind(uri: &str) -> LinkKind {
+    let (scheme, rest) = uri.split_once(':').unwrap_or((uri, ""));
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" | "mailto" | "ftp" => LinkKind::Web,
+        "file" => {
+            let rest = rest.trim_start_matches("//");
+            let path = &rest[rest.find('/').unwrap_or(rest.len())..];
+            LinkKind::File(PathBuf::from(
+                percent_encoding::percent_decode_str(path).decode_utf8_lossy().as_ref(),
+            ))
+        }
+        other => LinkKind::Other(other.to_owned()),
+    }
 }
 
 /// Drops punctuation a sentence put after the address.
@@ -332,6 +363,24 @@ fn labels(n: usize, alphabet: &[char]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_web_links_reach_the_system() {
+        assert_eq!(link_kind("https://github.com/x"), LinkKind::Web);
+        assert_eq!(link_kind("MAILTO:a@b.c"), LinkKind::Web);
+        assert_eq!(link_kind("file:///tmp/a%20b.rs"), LinkKind::File("/tmp/a b.rs".into()));
+        assert_eq!(link_kind("file://mac.local/Users/x"), LinkKind::File("/Users/x".into()));
+        assert_eq!(
+            link_kind("x-apple.systempreferences:com.apple"),
+            LinkKind::Other("x-apple.systempreferences".into())
+        );
+        assert_eq!(link_kind("ssh://host"), LinkKind::Other("ssh".into()));
+    }
+
+    #[test]
+    fn bare_relative_paths_never_look_like_options() {
+        assert_eq!(path("-rf/x.rs:3", true, None), Some(PathBuf::from("./-rf/x.rs:3")));
+    }
 
     fn screen(lines: &[&str]) -> Vec<Row> {
         lines

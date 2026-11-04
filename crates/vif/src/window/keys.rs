@@ -139,26 +139,46 @@ impl Win {
     /// commits in a tab of their own.
     pub(super) fn open_target(&mut self, target: Target, cwd: Option<PathBuf>, shared: &Shared) {
         match target.kind {
-            Kind::Url => {
-                let _ = open::that_detached(&target.text);
-            }
+            Kind::Url => self.open_link(&target.text, cwd, shared),
             Kind::Ip => self.clipboard.set(target.text),
-            Kind::Path { path, .. } if path.is_dir() => self.open_tab(shared, None, Some(path)),
-            Kind::Path { path, line } => {
-                let at = line.map(|l| format!(" +{l}")).unwrap_or_default();
-                let script = format!(
-                    "exec ${{VISUAL:-${{EDITOR:-vi}}}}{at} {}",
-                    quote(&path.to_string_lossy())
-                );
-                let run = shell_run(&self.config, &script);
-                self.open_tab(shared, Some(&run), cwd);
-            }
+            Kind::Path { path, line } => self.open_path(path, line, cwd, shared),
             Kind::Hash => {
                 let script = format!("LESS=R exec git --paginate show {}", target.text);
                 let run = shell_run(&self.config, &script);
                 self.open_tab(shared, Some(&run), cwd);
             }
         }
+    }
+
+    /// Opens a link a program printed. Only web and mail links go to the system: any other scheme
+    /// could start an app behind text that looks like a web link, so it's copied instead. A
+    /// `file:` link opens as a path, in the editor or a tab, and runs nothing.
+    pub(super) fn open_link(&mut self, uri: &str, cwd: Option<PathBuf>, shared: &Shared) {
+        use crate::hints::{LinkKind, link_kind};
+        match link_kind(uri) {
+            LinkKind::Web => {
+                let _ = open::that_detached(uri);
+            }
+            LinkKind::File(path) => self.open_path(path, None, cwd, shared),
+            LinkKind::Other(scheme) => {
+                self.clipboard.set(uri.to_owned());
+                self.flash(&format!("vif doesn't open {scheme}: links; copied it"));
+            }
+        }
+    }
+
+    /// A folder as a shell there, a file in the editor, at `line` if there is one.
+    fn open_path(&mut self, path: PathBuf, line: Option<u32>, cwd: Option<PathBuf>, shared: &Shared) {
+        if path.is_dir() {
+            return self.open_tab(shared, None, Some(path));
+        }
+        let at = line.map(|l| format!(" +{l}")).unwrap_or_default();
+        let script = format!(
+            "exec ${{VISUAL:-${{EDITOR:-vi}}}}{at} {}",
+            quote(&path.to_string_lossy())
+        );
+        let run = shell_run(&self.config, &script);
+        self.open_tab(shared, Some(&run), cwd);
     }
 
     pub(super) fn binding(&self, event: &KeyEvent) -> Option<String> {
