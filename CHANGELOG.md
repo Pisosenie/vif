@@ -2,6 +2,12 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
+## Unreleased
+
+### Added
+
+- A Debian package with every release, for Debian 12, Ubuntu 22.04 and newer on amd64 and arm64: `sudo apt install ./vif_<version>_<arch>.deb` brings what vif needs with it.
+
 ## 0.1.3 — 2026-11-04
 
 ### Security
