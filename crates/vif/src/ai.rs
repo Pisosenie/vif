@@ -69,7 +69,11 @@ fn messages(ask: &Ask, send: usize) -> (String, String) {
 /// curl's config for the request: given on stdin, so neither the key nor the question shows in
 /// the list of processes.
 fn curl_config(ai: &Ai, key: Option<&str>, body: &str) -> String {
-    let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    // Line breaks escaped too, so no value can end its line and start an option of its own.
+    let quote = |s: &str| {
+        let s = s.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{}\"", s.replace('\n', "\\n").replace('\r', "\\r"))
+    };
     let mut out = format!(
         "url = {}\nheader = \"Content-Type: application/json\"\ndata-binary = {}\n",
         quote(&format!("{}/chat/completions", ai.url)),
@@ -105,6 +109,15 @@ pub fn ask(ai: &Ai, ask: Ask, mut on: impl FnMut(Answer) + Send + 'static) {
             Err(_) => return on(Answer::Failed(format!("${name} isn't set; it should hold the API key"))),
         },
     };
+    // A line break would end the value in curl's config and start an option of its own.
+    if [ai.url.as_str(), ai.model.as_str(), key.as_deref().unwrap_or("")]
+        .iter()
+        .any(|v| v.contains(['\n', '\r']))
+    {
+        return on(Answer::Failed(
+            "the url, model or key has a line break in it".to_owned(),
+        ));
+    }
     let (system, user) = messages(&ask, ai.send as usize);
     let body = json!({
         "model": ai.model,
