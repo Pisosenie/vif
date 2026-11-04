@@ -2,6 +2,18 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
+## Unreleased
+
+### Security
+
+- Links a program printed opened through the system whatever their scheme, so text that looked like a web link could start an app. Only `http`, `https`, `mailto` and `ftp` links go to the system now; a `file:` link opens as a path, in the editor or a tab, and a link with any other scheme is copied instead, with its hint saying so.
+- A hint on a path starting with `-` handed it to the editor as an option; it's given as `./-…` now.
+- `async-executor` is updated past a yanked release.
+
+### Fixed
+
+- Taking a session back after the window changed size no longer leaves zsh's `%` marks with the prompt pushed over.
+
 ## 0.1.4 — 2026-11-04
 
 ### Added
