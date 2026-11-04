@@ -1,7 +1,7 @@
 # The cask for the Pisosenie/homebrew-tap repository: `brew install --cask pisosenie/tap/vif`.
 cask "vif" do
-  version "0.1.3"
-  sha256 "a4622539e0e71d724274ed5e8ef46a22856c443ef09300c778b6226ee87ea3d4"
+  version "0.1.4"
+  sha256 "01b488655b7ff521726ac89e2ed9b64165e19e4c1692a0d1edae4ac0663d2ff5"
 
   url "https://github.com/Pisosenie/vif/releases/download/v#{version}/vif-#{version}-macos.zip"
   name "vif"
