@@ -42,6 +42,8 @@ What is kept stays on this machine in files only you can read (0600, in a 0700 f
 
 Each shell runs under a small host process, so closing the window or quitting vif leaves it running, and the next vif brings it back in the same windows, tabs and splits with its scrollback and variables, like tmux without tmux. A host starts in about 11 ms and output through it is no slower; closing a tab or typing `exit` ends one for good. Even a restart doesn't lose the windows: they come back with their tabs and splits, a new shell in each pane's folder, and what the old one printed last above it. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets it go and leaves it running, ctrl-R names it, and `vif attach build` opens it from anywhere. `sessions = false` turns it all off.
 
+On another machine too: `vif ssh prod` opens a shell on `prod` that lives in a session there, so a dropped connection, a laptop lid or a train tunnel loses nothing. vif connects again by itself and the screen comes back as it was; `vif ssh prod build` names the session, and the same command later takes it back from anywhere. The shell over there gets vif's shell integration, so commands are blocks there as here. It needs vif installed on that machine as well, and nothing else: no daemon, no open port, only ssh.
+
 ## A quick terminal
 
 ![The quick terminal dropped down from the top of the screen over another window under niri](docs/quick.png)
@@ -131,7 +133,7 @@ Run `vif niri` again after changing the height. To open vif where niri opens a t
 
 Stable, and used every day: the terminal itself, tabs and splits, blocks, hints, search, the archive, sessions, themes, rules, the config and the settings window.
 
-Newer, and may still change: shaders, the picture behind the text, kitty graphics, the quick terminal's hotkey on macOS, `vif gif` and the greeting. Reports are welcome.
+Newer, and may still change: `vif ssh`, shaders, the picture behind the text, kitty graphics, the quick terminal's hotkey on macOS, `vif gif` and the greeting. Reports are welcome.
 
 ## Speed
 

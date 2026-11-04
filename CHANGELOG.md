@@ -19,6 +19,7 @@ Every release, newest first. The format follows [Keep a Changelog](https://keepa
 
 ### Added
 
+- `vif ssh HOST [NAME]`: a shell on another machine that outlives the connection. It lives in a session host over there, vif connects again when the connection drops, and the screen comes back as it was; with vif's shell integration on that side too. vif has to be installed on HOST.
 - After a restart, vif brings back the windows, tabs and splits it had, with a new shell in each pane's folder under what the old one printed last. Session hosts keep their output when the system stops them, with secrets taken out, readable by you alone.
 - The banner about problems in `vif.toml` has Fix typo, Open in settings and × buttons.
 - Search settings by name from the field above the pages; Esc clears it.
