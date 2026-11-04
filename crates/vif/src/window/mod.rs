@@ -473,7 +473,10 @@ impl Win {
             }
         }
         self.areas = all;
-        self.remember();
+        // A divider being dragged is written down once, when it's let go.
+        if self.dragging.is_none() {
+            self.remember();
+        }
         self.window.request_redraw();
     }
 
@@ -494,10 +497,11 @@ impl Win {
             };
             tabs.push(SavedTab { root, focus });
         }
+        // Folders as last seen, so this costs no questions to the system.
         let places = self
             .panes
             .values()
-            .filter_map(|p| Some((p.session.clone()?, p.cwd()?)))
+            .filter_map(|p| Some((p.session.clone()?, p.last_location()?.cwd?)))
             .collect();
         let saved = Saved {
             tabs,
@@ -534,8 +538,15 @@ impl Win {
 
     /// Takes over a saved window's sessions, in its tabs and splits.
     fn bring_back(&mut self, shared: &Shared, saved: Saved) {
-        let fresh = saved.restart.then_some(&saved.places);
-        for tab in saved.tabs.clone() {
+        let Saved {
+            tabs,
+            active,
+            places,
+            restart,
+            ..
+        } = saved;
+        let fresh = restart.then_some(&places);
+        for tab in tabs {
             let Some(root) = self.build(shared, tab.root, fresh) else {
                 continue;
             };
@@ -553,7 +564,7 @@ impl Win {
                 zoomed: false,
             });
         }
-        self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        self.active = active.min(self.tabs.len().saturating_sub(1));
         if !self.tabs.is_empty() {
             self.relayout();
             self.update_title();
@@ -926,6 +937,7 @@ impl Win {
                 moved |= before.as_ref() != Some(&pane.location());
             }
             if moved {
+                self.remember();
                 self.window.request_redraw();
             }
         }
@@ -947,17 +959,9 @@ impl Win {
         if done.is_empty() {
             return;
         }
-        // A command may have moved the shell to another folder, for the layout a restart reads.
-        self.remember();
-        let Some(pane) = self.panes.get_mut(&id) else {
-            return;
-        };
         let keep = self.config.terminal.archive_days > 0 && !pane.replaying();
-        let place = if keep {
-            pane.location()
-        } else {
-            crate::rules::Place::default()
-        };
+        // Asked once here, for the archive and for the layout a restart reads.
+        let place = pane.location();
         let after = Duration::from_secs(u64::from(self.config.terminal.notify_after));
         let seen = self.focused && self.areas.iter().any(|(p, _)| *p == id);
         for block in done {
@@ -997,6 +1001,7 @@ impl Win {
             self.window
                 .request_user_attention(Some(UserAttentionType::Informational));
         }
+        self.remember();
     }
 
     fn wake_cursor(&mut self) {

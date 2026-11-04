@@ -44,6 +44,17 @@ pub struct Saved {
     pub restart: bool,
 }
 
+impl Saved {
+    /// Every session in it, tab by tab.
+    pub fn sessions(&self) -> Vec<&str> {
+        let mut ids = Vec::new();
+        for tab in &self.tabs {
+            tab.root.sessions(&mut ids);
+        }
+        ids
+    }
+}
+
 impl Shape {
     fn sessions<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
@@ -90,6 +101,13 @@ pub fn kept() -> PathBuf {
     crate::terminfo::data_dir().join("layouts")
 }
 
+/// [`kept`], made closed to others.
+pub fn kept_made() -> std::io::Result<PathBuf> {
+    let dir = kept();
+    DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    Ok(dir)
+}
+
 fn write(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     let fresh = path.with_extension("new");
     fs::write(&fresh, text)?;
@@ -99,26 +117,39 @@ fn write(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 /// Every window that wrote down its layout, oldest first: whether it's the quick terminal, and
 /// its sessions.
 pub fn windows() -> Vec<(bool, Vec<String>)> {
-    let mut found: Vec<(SystemTime, bool, Vec<String>)> = fs::read_dir(session::dir())
+    written(&session::dir())
+        .into_iter()
+        .map(|(_, saved)| (saved.quick, saved.sessions().into_iter().map(str::to_owned).collect()))
+        .collect()
+}
+
+/// The layouts in `dir`, oldest first, with the file each came from; one that can't be read is
+/// thrown away.
+fn written(dir: &std::path::Path) -> Vec<(PathBuf, Saved)> {
+    let mut found: Vec<(SystemTime, PathBuf, Saved)> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "layout"))
-        .filter_map(|e| {
-            let at = e
-                .metadata()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "layout"))
+        .filter_map(|path| {
+            let at = fs::metadata(&path)
                 .and_then(|m| m.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
-            let saved: Saved = serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok()?;
-            let mut ids = Vec::new();
-            for tab in &saved.tabs {
-                tab.root.sessions(&mut ids);
+            match fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+            {
+                Some(saved) => Some((at, path, saved)),
+                None => {
+                    let _ = fs::remove_file(&path);
+                    None
+                }
             }
-            Some((at, saved.quick, ids.into_iter().map(str::to_owned).collect()))
         })
         .collect();
     found.sort_by_key(|(at, ..)| *at);
-    found.into_iter().map(|(_, quick, ids)| (quick, ids)).collect()
+    found.into_iter().map(|(_, path, saved)| (path, saved)).collect()
 }
 
 /// Writes a window's layout; one with no sessions leaves no file.
@@ -134,8 +165,8 @@ pub fn save(window: u64, saved: &Saved) {
     if crate::private::made("vif-sessions").is_ok() {
         let _ = write(&path, &text);
     }
-    if DirBuilder::new().recursive(true).mode(0o700).create(kept()).is_ok() {
-        let _ = write(&kept().join(name(window)), &text);
+    if let Ok(dir) = kept_made() {
+        let _ = write(&dir.join(name(window)), &text);
     }
 }
 
@@ -147,34 +178,18 @@ pub fn forget(window: u64) {
 /// The windows of a vif that's gone and whose shells went with it, as after a restart; each
 /// session's last output is kept by its id next to them.
 pub fn after_restart() -> Vec<Saved> {
-    let mut found: Vec<(SystemTime, Saved)> = Vec::new();
-    for entry in fs::read_dir(kept()).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "layout") || alive(pid_of(&path)) {
+    let mut windows = Vec::new();
+    for (path, saved) in written(&kept()) {
+        if alive(pid_of(&path)) {
             continue;
         }
-        let at = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let saved = fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Saved>(&t).ok());
         let _ = fs::remove_file(&path);
-        let Some(saved) = saved else {
-            continue;
-        };
-        let mut ids = Vec::new();
-        for tab in &saved.tabs {
-            tab.root.sessions(&mut ids);
-        }
         // A shell still running is another vif's to take, not this one's to start again.
-        if ids.iter().all(|id| !session::dir().join(format!("{id}.ctl")).exists()) {
-            found.push((at, Saved { restart: true, ..saved }));
+        if saved.sessions().iter().all(|id| !session::listening(id)) {
+            windows.push(Saved { restart: true, ..saved });
         }
     }
-    found.sort_by_key(|(at, _)| *at);
-    found.into_iter().map(|(_, saved)| saved).collect()
+    windows
 }
 
 /// What a session printed last before its host was stopped, taken once.
@@ -201,31 +216,14 @@ fn alive(pid: i32) -> bool {
 /// The windows to bring back, oldest first, holding only sessions in `free`; free sessions no
 /// layout knows become tabs of the first. Layouts of a vif that still runs stay where they are.
 pub fn take(free: Vec<String>) -> Vec<Saved> {
-    let mut found: Vec<(SystemTime, PathBuf, i32)> = Vec::new();
-    for entry in fs::read_dir(session::dir()).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "layout") {
-            continue;
-        }
-        let pid = pid_of(&path);
-        let at = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        found.push((at, path, pid));
-    }
-    found.sort();
     let mut left: Vec<String> = free;
     let mut windows = Vec::new();
-    for (_, path, pid) in found {
-        if alive(pid) {
+    for (path, saved) in written(&session::dir()) {
+        if alive(pid_of(&path)) {
             continue;
         }
-        let saved = fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Saved>(&text).ok());
         let _ = fs::remove_file(&path);
-        if let Some(saved) = saved.and_then(|s| arrange(s, &mut left)) {
+        if let Some(saved) = arrange(saved, &mut left) {
             // Its shells are back, so its copy for a restart is spent; this vif writes its own.
             if let Some(name) = path.file_name() {
                 let _ = fs::remove_file(kept().join(name));

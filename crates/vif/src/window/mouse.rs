@@ -191,6 +191,7 @@ impl Win {
             }
         }
         if state == ElementState::Released && button == MouseButton::Left && self.dragging.take().is_some() {
+            self.remember();
             self.divider_cursor();
             return;
         }
