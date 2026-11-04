@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -237,14 +236,7 @@ impl Pane {
         }
         let term = Arc::new(FairMutex::new(term));
 
-        let mut env = HashMap::new();
-        env.insert("TERM".to_owned(), spawn.term.0.clone());
-        env.insert("COLORTERM".to_owned(), "truecolor".to_owned());
-        env.insert("TERM_PROGRAM".to_owned(), "vif".to_owned());
-        env.insert("TERM_PROGRAM_VERSION".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
-        if let Some(dir) = &spawn.term.1 {
-            env.insert("TERMINFO".to_owned(), dir.display().to_string());
-        }
+        let mut env = crate::shell::env(spawn.term);
         let greeting = &spawn.config.greeting;
         let greet = match greeting.show {
             GreetingShow::Off => false,
@@ -520,16 +512,7 @@ impl Pane {
 
     /// The command line a block ran, as typed after the prompt, leading spaces and all.
     pub fn command(&self, id: u32) -> Option<String> {
-        let term = self.term.lock();
-        let grid = term.grid();
-        let (first, last) = (-(grid.history_size() as i32), grid.screen_lines() as i32 - 1);
-        (first..=last).rev().find_map(|l| {
-            let row = &grid[Line(l)];
-            let at = (0..row.len())
-                .find(|&c| row[Column(c)].zerowidth().and_then(|z| marks::find(z, Kind::Command)) == Some(id))?;
-            let text: String = (at + 1..row.len()).map(|c| row[Column(c)].c).collect();
-            Some(text.trim_end().to_owned()).filter(|t| !t.trim().is_empty())
-        })
+        self.after_prompt(|block| block == id).filter(|t| !t.trim().is_empty())
     }
 
     /// What is typed at the prompt now, when no command runs.
@@ -537,6 +520,11 @@ impl Pane {
         if self.busy() {
             return None;
         }
+        self.after_prompt(|_| true).map(|t| t.trim().to_owned())
+    }
+
+    /// The text after the lowest prompt whose block `which` picks.
+    fn after_prompt(&self, which: impl Fn(u32) -> bool) -> Option<String> {
         let term = self.term.lock();
         let grid = term.grid();
         let (first, last) = (-(grid.history_size() as i32), grid.screen_lines() as i32 - 1);
@@ -546,10 +534,10 @@ impl Pane {
                 row[Column(c)]
                     .zerowidth()
                     .and_then(|z| marks::find(z, Kind::Command))
-                    .is_some()
+                    .is_some_and(&which)
             })?;
             let text: String = (at + 1..row.len()).map(|c| row[Column(c)].c).collect();
-            Some(text.trim().to_owned())
+            Some(text.trim_end().to_owned())
         })
     }
 

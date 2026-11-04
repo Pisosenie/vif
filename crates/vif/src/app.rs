@@ -62,6 +62,12 @@ pub enum UserEvent {
         seq: u64,
         answer: crate::ai::Answer,
     },
+    /// The model's command for the words at a prompt, or why there's none.
+    AiCommand {
+        window: WindowId,
+        pane: PaneId,
+        result: Result<String, String>,
+    },
     /// Show block in a notification was pressed.
     ShowBlock {
         window: WindowId,
@@ -431,6 +437,11 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ai { window, seq, answer } => {
                 if let Some(win) = self.windows.get_mut(&window) {
                     win.ai_event(seq, answer);
+                }
+            }
+            UserEvent::AiCommand { window, pane, result } => {
+                if let Some(win) = self.windows.get_mut(&window) {
+                    win.ai_command(pane, result);
                 }
             }
             UserEvent::ShowBlock { window, pane, block } => {

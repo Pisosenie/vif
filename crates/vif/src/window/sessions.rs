@@ -34,6 +34,13 @@ struct Card {
     group: (usize, String),
 }
 
+/// Where a heading or a card goes, down from the top of the cards.
+enum Spot {
+    Heading(String, f32),
+    /// The card's index among those shown, and its column.
+    Card(usize, usize, f32),
+}
+
 #[derive(Default)]
 pub(super) struct Sessions {
     cards: Vec<Card>,
@@ -259,13 +266,13 @@ impl Win {
                     sy += card_h + gap;
                 }
                 col = 0;
-                spots.push((None, group.clone(), sy));
+                spots.push(Spot::Heading(group.clone(), sy));
                 sy += heading;
             } else if col == COLUMNS {
                 col = 0;
                 sy += card_h + gap;
             }
-            spots.push((Some((i, col)), String::new(), sy));
+            spots.push(Spot::Card(i, col, sy));
             col += 1;
         }
         let used = if groups.is_empty() { card_h } else { sy + card_h + gap };
@@ -313,12 +320,15 @@ impl Win {
             .push(Rect::fill(caret_x, ty, (2.0 * scale).round(), ch, scheme.accent()));
         let top = ty + ch + pad;
         let mut areas = Vec::new();
-        for (spot, group, sy) in spots {
-            let Some((i, col)) = spot else {
-                if top + sy + heading <= y + height {
-                    self.label(&group, x + pad, top + sy, muted, Style::Bold, &mut text);
+        for spot in spots {
+            let (i, col, sy) = match spot {
+                Spot::Card(i, col, sy) => (i, col, sy),
+                Spot::Heading(group, sy) => {
+                    if top + sy + heading <= y + height {
+                        self.label(&group, x + pad, top + sy, muted, Style::Bold, &mut text);
+                    }
+                    continue;
                 }
-                continue;
             };
             let (name, what, status, preview) = &cards[i];
             let cx = x + pad + col as f32 * (card_w + gap);
@@ -387,7 +397,6 @@ impl Win {
     }
 }
 
-/// A screen's last non-empty lines, oldest first.
 fn panes(n: usize) -> String {
     if n == 1 {
         "1 pane".to_owned()
@@ -418,6 +427,7 @@ fn grouped(id: &str, attached: bool, others: &[(bool, Vec<String>)]) -> (usize, 
     }
 }
 
+/// A screen's last non-empty lines, oldest first.
 fn tail(term: &Term<crate::pane::Proxy>, count: usize) -> Vec<String> {
     lines_of(term.grid(), count)
 }

@@ -1,7 +1,12 @@
 //! Finding a setting by a few letters: every key vif.toml knows and every page, matched on
 //! all the words typed, each found by the page it's on.
 
+use std::sync::LazyLock;
+
 use crate::Page;
+
+/// Every key vif.toml knows, made once.
+static KEYS: LazyLock<Vec<String>> = LazyLock::new(vif_config::known);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hit {
@@ -42,10 +47,13 @@ pub fn find(query: &str, limit: usize) -> Vec<Hit> {
             page,
             label: page.title().to_owned(),
         });
-    let keys = vif_config::known().into_iter().filter_map(|key| {
+    let keys = KEYS.iter().filter_map(|key| {
         let section = key.split_once('.').map_or(key.as_str(), |(s, _)| s);
         let page = page_of(section)?;
-        fits(&format!("{key} {}", page.title())).then_some(Hit { page, label: key })
+        fits(&format!("{key} {}", page.title())).then(|| Hit {
+            page,
+            label: key.clone(),
+        })
     });
     pages.chain(keys).take(limit).collect()
 }

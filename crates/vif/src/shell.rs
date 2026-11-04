@@ -19,6 +19,28 @@ const FILES: [(&str, &str); 4] = [
     ),
 ];
 
+/// What every shell vif starts is told about the terminal it's in: TERM and its terminfo.
+pub fn env(term: &(String, Option<PathBuf>)) -> HashMap<String, String> {
+    let mut env = HashMap::from([
+        ("TERM".to_owned(), term.0.clone()),
+        ("COLORTERM".to_owned(), "truecolor".to_owned()),
+        ("TERM_PROGRAM".to_owned(), "vif".to_owned()),
+        ("TERM_PROGRAM_VERSION".to_owned(), env!("CARGO_PKG_VERSION").to_owned()),
+    ]);
+    if let Some(dir) = &term.1 {
+        env.insert("TERMINFO".to_owned(), dir.display().to_string());
+    }
+    env
+}
+
+/// The user's shell by name, like `zsh`.
+pub fn name() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .and_then(|s| s.rsplit('/').next().map(str::to_owned))
+        .unwrap_or_else(|| "sh".to_owned())
+}
+
 /// The shell for a new pane and its arguments, with `env` set up so it loads the integration
 /// where it can; None leaves the choice to the user's login shell. A `VIF_GREET` already in
 /// `env` asks for the greeting, and goes if this shell can't play it.

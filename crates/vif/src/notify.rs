@@ -21,6 +21,12 @@ fn buttons() -> bool {
 /// Shows a notification. Where the notifications can have buttons (on Linux, with a daemon like
 /// mako or swaync), it has Show block and Dismiss, and `show` runs when Show block is pressed.
 pub fn send(title: &str, body: &str, show: Option<Show>) {
+    let (title, body) = (title.to_owned(), body.to_owned());
+    // Off the event loop: asking notify-send what it can do takes a moment, once.
+    std::thread::spawn(move || notify(&title, &body, show));
+}
+
+fn notify(title: &str, body: &str, show: Option<Show>) {
     let show = show.filter(|_| cfg!(target_os = "linux") && buttons());
     let mut command = if cfg!(target_os = "macos") {
         let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
@@ -45,20 +51,17 @@ pub fn send(title: &str, body: &str, show: Option<Show>) {
         .stdout(if show.is_some() { Stdio::piped() } else { Stdio::null() })
         .stderr(Stdio::null())
         .spawn();
-    match spawned {
-        Ok(mut child) => {
-            std::thread::spawn(move || {
-                // notify-send waits for an answer and prints the button's name.
-                let mut answer = String::new();
-                if let Some(out) = child.stdout.as_mut() {
-                    let _ = out.read_to_string(&mut answer);
-                }
-                let _ = child.wait();
-                if let Some(show) = show.filter(|_| answer.trim() == "show") {
-                    show();
-                }
-            });
-        }
-        Err(err) => log::warn!("can't notify: {err}"),
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => return log::warn!("can't notify: {err}"),
+    };
+    // notify-send waits for an answer and prints the button's name.
+    let mut answer = String::new();
+    if let Some(out) = child.stdout.as_mut() {
+        let _ = out.read_to_string(&mut answer);
+    }
+    let _ = child.wait();
+    if let Some(show) = show.filter(|_| answer.trim() == "show") {
+        show();
     }
 }

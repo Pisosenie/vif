@@ -1,5 +1,5 @@
 //! The model's answers in the window: why a block failed, in a panel as the words come, and a
-//! command for the words at the prompt, typed in place of them when it's ready.
+//! command for the words at the prompt, typed in place of them once it's all there.
 
 use vif_render::{Rect, Scene, Style};
 use winit::event::{ElementState, KeyEvent};
@@ -10,15 +10,8 @@ use crate::ai::{self, Answer, Ask};
 use crate::colors::mix;
 use crate::layout::PaneId;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Asked {
-    Explain,
-    Command,
-}
-
+/// Why a block failed, as far as the answer has come.
 pub(super) struct Reply {
-    asked: Asked,
-    pane: PaneId,
     /// Which question this is, so a late answer to an older one is dropped.
     seq: u64,
     heading: String,
@@ -39,11 +32,27 @@ impl Win {
         self.config.ai.enabled
     }
 
-    fn ask(&mut self, asked: Asked, pane: PaneId, heading: String, question: Ask) {
+    /// Asks why a finished block failed.
+    pub(super) fn explain(&mut self, pane_id: PaneId, block: u32) {
+        if !self.ai_on() {
+            return;
+        }
+        let Some(pane) = self.panes.get(&pane_id) else {
+            return;
+        };
+        let exit = pane.blocks.get(block).and_then(|b| b.ended).map_or(0, |(_, e)| e);
+        let Some(command) = pane.command(block).filter(|_| exit != 0) else {
+            return self.flash("Only a command that failed can be explained");
+        };
+        let question = Ask::Explain {
+            command: command.trim().to_owned(),
+            exit,
+            cwd: pane.cwd().map(|c| crate::tilde(&c)).unwrap_or_default(),
+            output: pane.output(block).unwrap_or_default(),
+        };
+        let heading = format!("Why `{}` failed · {}", command.trim(), self.config.ai.model);
         let seq = self.reply.as_ref().map_or(1, |r| r.seq + 1);
         self.reply = Some(Reply {
-            asked,
-            pane,
             seq,
             heading,
             text: String::new(),
@@ -55,28 +64,6 @@ impl Win {
             let _ = proxy.send_event(UserEvent::Ai { window, seq, answer });
         });
         self.window.request_redraw();
-    }
-
-    /// Asks why a finished block failed.
-    pub(super) fn explain(&mut self, pane_id: PaneId, block: u32) {
-        if !self.ai_on() {
-            return;
-        }
-        let Some(pane) = self.panes.get(&pane_id) else {
-            return;
-        };
-        let Some(command) = pane.command(block) else {
-            return self.flash("That command is gone from the scrollback");
-        };
-        let exit = pane.blocks.get(block).and_then(|b| b.ended).map_or(0, |(_, e)| e);
-        let question = Ask::Explain {
-            command: command.trim().to_owned(),
-            exit,
-            cwd: pane.cwd().map(|c| crate::tilde(&c)).unwrap_or_default(),
-            output: pane.output(block).unwrap_or_default(),
-        };
-        let heading = format!("Why `{}` failed · {}", command.trim(), self.config.ai.model);
-        self.ask(Asked::Explain, pane_id, heading, question);
     }
 
     /// Turns the words at the prompt into a command, typed in their place.
@@ -97,8 +84,31 @@ impl Win {
             return self.flash("Type what the command should do, then ask");
         }
         let cwd = pane.cwd().map(|c| crate::tilde(&c)).unwrap_or_default();
-        self.ask(Asked::Command, id, String::new(), Ask::Command { words, cwd });
+        let (proxy, window) = (self.proxy.clone(), self.window.id());
+        ai::ask_whole(&self.config.ai, Ask::Command { words, cwd }, move |result| {
+            let _ = proxy.send_event(UserEvent::AiCommand {
+                window,
+                pane: id,
+                result,
+            });
+        });
         self.flash(&format!("Asking {}…", self.config.ai.model));
+    }
+
+    /// The command for the words at `pane`'s prompt, typed in their place.
+    pub fn ai_command(&mut self, pane: PaneId, result: Result<String, String>) {
+        let command = match result {
+            Ok(answer) => ai::one_line(&answer),
+            Err(why) => return self.tell(vec!["The model didn't answer.".to_owned(), why]),
+        };
+        if command.is_empty() {
+            return self.flash("No command came back");
+        }
+        if let Some(pane) = self.panes.get(&pane) {
+            // ctrl-e and ctrl-u clear the line in zsh, bash and fish alike.
+            pane.input(b"\x05\x15".to_vec());
+        }
+        self.paste(command);
     }
 
     /// A piece of an answer, or its end.
@@ -111,27 +121,12 @@ impl Win {
             Answer::Failed(why) => reply.failed = Some(why),
             Answer::Done => reply.done = true,
         }
-        if reply.asked == Asked::Command && (reply.done || reply.failed.is_some()) {
-            let reply = self.reply.take().expect("a reply");
-            if let Some(why) = reply.failed {
-                return self.tell(vec!["The model didn't answer.".to_owned(), why]);
-            }
-            let command = ai::one_line(&reply.text);
-            if command.is_empty() {
-                return self.flash("No command came back");
-            }
-            if let Some(pane) = self.panes.get(&reply.pane) {
-                // ctrl-e and ctrl-u clear the line in zsh, bash and fish alike.
-                pane.input(b"\x05\x15".to_vec());
-            }
-            self.paste(command);
-        }
         self.window.request_redraw();
     }
 
     /// Keys while an answer shows: Enter types its command, c copies it, Esc closes it.
     pub(super) fn reply_key(&mut self, event: &KeyEvent) -> bool {
-        let Some(reply) = self.reply.as_ref().filter(|r| r.asked == Asked::Explain) else {
+        let Some(reply) = &self.reply else {
             return false;
         };
         if event.state != ElementState::Pressed {
@@ -157,7 +152,7 @@ impl Win {
     }
 
     pub(super) fn draw_reply(&mut self, scene: &mut Scene) {
-        let Some(reply) = self.reply.as_ref().filter(|r| r.asked == Asked::Explain) else {
+        let Some(reply) = &self.reply else {
             return;
         };
         let (heading, answer, failed, done) = (
@@ -220,20 +215,24 @@ impl Win {
 fn wrap(text: &str, cols: usize) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.lines() {
-        let mut current = String::new();
+        let (mut current, mut len) = (String::new(), 0);
         for word in line.split(' ') {
-            let fits = current.chars().count() + word.chars().count() < cols;
-            if !current.is_empty() && !fits {
+            let size = word.chars().count();
+            if len > 0 && len + size >= cols {
                 out.push(std::mem::take(&mut current));
+                len = 0;
             }
-            if !current.is_empty() {
+            if len > 0 {
                 current.push(' ');
+                len += 1;
             }
             current.push_str(word);
-            while current.chars().count() > cols {
+            len += size;
+            while len > cols {
                 let head: String = current.chars().take(cols).collect();
                 current = current.chars().skip(cols).collect();
                 out.push(head);
+                len -= cols;
             }
         }
         out.push(current);

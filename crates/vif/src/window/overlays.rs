@@ -341,9 +341,7 @@ impl Win {
         scene.over.extend(panel.mask);
         if let Some(n) = &mut self.notice {
             n.area = Area { x, y, w, h };
-            if !drawn.is_empty() {
-                n.buttons = drawn;
-            }
+            n.buttons = drawn;
         }
     }
 }

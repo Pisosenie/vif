@@ -34,13 +34,6 @@ pub enum Answer {
     Failed(String),
 }
 
-fn shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .and_then(|s| s.rsplit('/').next().map(str::to_owned))
-        .unwrap_or_else(|| "sh".to_owned())
-}
-
 /// The system's words and the user's for `ask`, with at most `send` characters of output, the end
 /// of it, where errors are.
 fn messages(ask: &Ask, send: usize) -> (String, String) {
@@ -57,7 +50,7 @@ fn messages(ask: &Ask, send: usize) -> (String, String) {
             let user = format!(
                 "{os}, {shell}, in {cwd}\n$ {command}\nexit {exit}\n\n{}",
                 crate::secrets::hide(&tail),
-                shell = shell(),
+                shell = crate::shell::name(),
                 command = crate::secrets::hide(command),
             );
             (EXPLAIN.to_owned(), user)
@@ -66,7 +59,7 @@ fn messages(ask: &Ask, send: usize) -> (String, String) {
             let system = format!(
                 "Turn the user's words into one {} command for {os}, run in {cwd}. Reply with the \
                  command only: one line, no explanation, no backticks.",
-                shell()
+                crate::shell::name()
             );
             (system, crate::secrets::hide(words))
         }
@@ -161,6 +154,22 @@ pub fn ask(ai: &Ai, ask: Ask, mut on: impl FnMut(Answer) + Send + 'static) {
             on(Answer::Done);
         } else {
             on(Answer::Failed(failure(&errors, &body)));
+        }
+    });
+}
+
+/// Asks, and hands `done` the whole answer once it's all come, or why it didn't.
+pub fn ask_whole(ai: &Ai, question: Ask, done: impl FnOnce(Result<String, String>) + Send + 'static) {
+    let mut text = String::new();
+    let mut done = Some(done);
+    ask(ai, question, move |answer| {
+        let result = match answer {
+            Answer::Text(piece) => return text.push_str(&piece),
+            Answer::Done => Ok(std::mem::take(&mut text)),
+            Answer::Failed(why) => Err(why),
+        };
+        if let Some(done) = done.take() {
+            done(result);
         }
     });
 }
