@@ -585,15 +585,12 @@ impl Win {
         let mut areas = Vec::new();
         root.layout(self.content(), self.gap(), &mut areas);
         for (id, session) in sessions {
-            let area = areas.iter().find(|(p, _)| *p == id).map_or(self.content(), |(_, a)| *a);
-            let spawned = match fresh {
-                Some(places) => {
-                    let cwd = places.get(&session).cloned();
-                    let before = layouts::last_output(&session);
-                    self.spawn_with(id, area, shared, None, cwd, None, before)
-                }
-                None => self.spawn_with(id, area, shared, None, None, Some(session), None),
+            let area = crate::layout::area_of(&areas, id).unwrap_or(self.content());
+            let (cwd, attach, before) = match fresh {
+                Some(places) => (places.get(&session).cloned(), None, layouts::last_output(&session)),
+                None => (None, Some(session), None),
             };
+            let spawned = self.spawn_with(id, area, shared, None, cwd, attach, before);
             if let Err(err) = spawned {
                 log::warn!("can't take a session back: {err}");
                 if !root.remove(id) {

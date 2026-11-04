@@ -155,7 +155,7 @@ impl Node {
                 let old = std::mem::replace(self, Node::Pane(target));
                 *self = Node::Split {
                     across,
-                    ratio: 0.5,
+                    ratio: HALF,
                     first: Box::new(old),
                     second: Box::new(Node::Pane(new)),
                 };
@@ -220,9 +220,17 @@ fn clamp_ratio(ratio: f32) -> f32 {
     ratio.clamp(0.1, 0.9)
 }
 
+/// Where a split puts its divider at first.
+const HALF: f32 = 0.5;
+
 /// Where a pane split off from one in `area` goes: its second half.
 pub fn split_off(area: Area, gap: f32, across: bool) -> Area {
-    parts(area, gap, across, 0.5).2
+    parts(area, gap, across, HALF).2
+}
+
+/// Where pane `id` is among `areas`.
+pub fn area_of(areas: &[(PaneId, Area)], id: PaneId) -> Option<Area> {
+    areas.iter().find(|(p, _)| *p == id).map(|(_, a)| *a)
 }
 
 /// The first side, the gap and the second side of `area` split at `ratio`.
@@ -264,7 +272,7 @@ fn parts(area: Area, gap: f32, across: bool, ratio: f32) -> (Area, Area, Area) {
 
 /// The pane whose center lies nearest in `direction` from `from`.
 pub fn neighbor(areas: &[(PaneId, Area)], from: PaneId, direction: Direction) -> Option<PaneId> {
-    let (_, origin) = areas.iter().find(|(id, _)| *id == from)?;
+    let origin = area_of(areas, from)?;
     let (ox, oy) = origin.center();
     areas
         .iter()
