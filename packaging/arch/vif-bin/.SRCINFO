@@ -1,6 +1,6 @@
 pkgbase = vif-bin
 	pkgdesc = A fast GPU terminal with themes, command blocks and shells that outlive the window (prebuilt)
-	pkgver = 0.1.2
+	pkgver = 0.1.3
 	pkgrel = 1
 	url = https://github.com/Pisosenie/vif
 	arch = x86_64
@@ -26,11 +26,9 @@ pkgbase = vif-bin
 	conflicts = vif
 	options = !debug
 	options = !strip
-	source = xterm-vif-0.1.2.terminfo::https://raw.githubusercontent.com/Pisosenie/vif/v0.1.2/assets/xterm-vif.terminfo
-	sha256sums = dea446dfd1b4eda84fc89bd6d2c805dc11c575c2f2370d4a14ae59cab6a0090c
-	source_x86_64 = https://github.com/Pisosenie/vif/releases/download/v0.1.2/vif-0.1.2-x86_64-linux.tar.gz
-	sha256sums_x86_64 = 99d95341648571eef56de1bd2e33ceb683fc71d0784bb6750aed8eb5b398ce2b
-	source_aarch64 = https://github.com/Pisosenie/vif/releases/download/v0.1.2/vif-0.1.2-aarch64-linux.tar.gz
-	sha256sums_aarch64 = d9a6ad0ffd400c637f895f662d62cdae2a2a1e6d829a0b0064cf87b90903a28c
+	source_x86_64 = https://github.com/Pisosenie/vif/releases/download/v0.1.3/vif-0.1.3-x86_64-linux.tar.gz
+	sha256sums_x86_64 = 46219dcf9a30a8564bdcd91b4db72e2018f49baf6e1d7f5683b74411e58d5262
+	source_aarch64 = https://github.com/Pisosenie/vif/releases/download/v0.1.3/vif-0.1.3-aarch64-linux.tar.gz
+	sha256sums_aarch64 = e7cfc5684e049f4c5f938a0c3a62961898bace2b3b28ab833c0902c6fac1d49c
 
 pkgname = vif-bin
