@@ -86,7 +86,13 @@ cd vif/packaging/arch/vif-bin && makepkg -si
 
 All three install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs.
 
-**macOS 13 or later**, Apple silicon or Intel: download `vif-<version>-macos.zip` from [Releases](https://github.com/Pisosenie/vif/releases), unzip it and drag `vif.app` to Applications. The app isn't notarized yet, so macOS refuses it the first time: open it once with System Settings → Privacy & Security → Open Anyway, or run
+**macOS 13 or later**, Apple silicon or Intel, with Homebrew:
+
+```sh
+brew install --cask pisosenie/tap/vif
+```
+
+or download `vif-<version>-macos.zip` from [Releases](https://github.com/Pisosenie/vif/releases), unzip it and drag `vif.app` to Applications. The app isn't notarized yet, so macOS refuses it the first time: open it once with System Settings → Privacy & Security → Open Anyway, or run
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/vif.app
