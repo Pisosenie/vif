@@ -1,6 +1,6 @@
 # Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
 pkgname=vif
-pkgver=0.1.7
+pkgver=0.1.8
 pkgrel=1
 pkgdesc='A fast GPU terminal with themes, command blocks and shells that outlive the window'
 arch=('x86_64' 'aarch64')

@@ -2,7 +2,7 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
-## Unreleased
+## 0.1.8 — 2026-11-09
 
 ### Added
 
@@ -12,6 +12,10 @@ Every release, newest first. The format follows [Keep a Changelog](https://keepa
 
 - A session host marks where the painting it starts a client with ends, so `vif ssh` over UDP no longer waits a moment to be sure.
 - On macOS, `vif ssh` acts only on changes to addresses, routes and interfaces, not on every lookup the system's routing socket reports.
+
+### Fixed
+
+- On a slow link, typing showed before its echo only when the first character's echo came back within half a second; now a slow echo still turns it on.
 
 ## 0.1.7 — 2026-11-09
 
