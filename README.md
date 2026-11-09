@@ -103,7 +103,7 @@ xattr -dr com.apple.quarantine /Applications/vif.app
 **Debian 12, Ubuntu 22.04 and newer**, amd64 or arm64: `vif_<version>_<arch>.deb` from [Releases](https://github.com/Pisosenie/vif/releases), installed with what it needs:
 
 ```sh
-sudo apt install ./vif_0.1.7_amd64.deb
+sudo apt install ./vif_0.1.8_amd64.deb
 ```
 
 **Other Linux**, x86_64 or aarch64: `vif-<version>-<arch>-linux.tar.gz` from [Releases](https://github.com/Pisosenie/vif/releases), built on Ubuntu 22.04, so it runs with glibc 2.35 or newer. Unpack it and run `./install.sh`, which puts `vif` and `vif-settings` in `~/.local/bin` with a desktop entry and the icon (`sudo ./install.sh /usr/local` for everyone). It needs Wayland or X11, and Vulkan or OpenGL.
