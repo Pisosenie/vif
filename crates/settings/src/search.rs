@@ -19,7 +19,7 @@ pub struct Hit {
 fn page_of(section: &str) -> Option<Page> {
     match section {
         "panes" => Some(Page::Tabs),
-        "badges" | "hints" => Some(Page::Terminal),
+        "badges" | "hints" | "ssh" => Some(Page::Terminal),
         "theme" => Some(Page::Themes),
         "background" => Some(Page::Effects),
         _ => Page::ALL.into_iter().find(|p| p.section() == section),

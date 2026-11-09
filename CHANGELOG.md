@@ -2,6 +2,15 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
+## Unreleased
+
+### Added
+
+- `vif ssh` over UDP, the way mosh does it: ssh starts an agent over there and hands back its port and a one-time key, and keys and output then travel as datagrams sealed with ChaCha20-Poly1305. A laptop that sleeps or changes networks finds its shell where it left it, at once. Output passes through as it is, so the terminal's scrollback keeps it; after a long time away the screen is painted afresh with the lines that scrolled by. Typing shows before its echo on slow links, once a guess in that line came true. Ports 60000–61000, as mosh's; where UDP doesn't get through, `vif ssh` stays on ssh. `[ssh] udp`, `--udp` and `--no-udp` choose; ctrl-^ `.` leaves the shell running.
+- Over plain ssh, `vif ssh` sends keepalives unless the ssh config has its own, so a dead link shows in seconds, and reconnects as soon as the network moves the machine to another address.
+- A session comes back the way tmux brings one back: its host keeps a screen of what the shell printed and paints it, with the last thousand lines above it and commands still blocks with their exit codes. Before, it played the last two megabytes of output again, which could start in the middle of an escape sequence, miss that a full-screen program had the alternate screen, or wrap at the width it was printed at.
+- `[keys] like = "kitty"`, `"wezterm"` or `"ghostty"` lays that terminal's shortcuts for what vif shares with it under your own; Settings → Keys has it too.
+
 ## 0.1.5 — 2026-11-04
 
 ### Security

@@ -208,6 +208,7 @@ enum Message {
     ActionDraft(Choice),
     AddKey,
     RemoveKey(String),
+    KeysLike(Choice),
     Shell(String),
     Scrollback(f32),
     Term(Choice),
@@ -497,6 +498,8 @@ impl Settings {
                 }
             }
             Message::Scrollback(v) => self.edit(|e| e.set("terminal", "scrollback", v.round() as i64)),
+            Message::KeysLike(Choice("vif")) => self.edit(|e| e.remove("keys", "like")),
+            Message::KeysLike(Choice(v)) => self.edit(|e| e.set("keys", "like", v)),
             Message::Term(Choice(v)) => self.edit(|e| e.set("terminal", "term", v)),
             Message::Osc52(Choice(v)) => self.edit(|e| e.set("terminal", "osc52", v)),
             Message::Kitty(v) => self.edit(|e| e.set("terminal", "kitty_keyboard", v)),
@@ -1373,6 +1376,20 @@ impl Settings {
                 .align_y(Alignment::Center),
             );
         }
+        let [kitty, wezterm, ghostty] = vif_config::PRESETS;
+        let like = field(
+            "Keys like",
+            pick_list(
+                [Choice("vif"), Choice(kitty), Choice(wezterm), Choice(ghostty)],
+                Some(Choice(self.config.keys_like.unwrap_or("vif"))),
+                Message::KeysLike,
+            )
+            .width(200)
+            .style(style::pick)
+            .menu_style(style::menu)
+            .into(),
+            Some("another terminal's shortcuts for what vif shares with it; yours still win"),
+        );
         let actions: Vec<Choice> = ACTIONS.iter().map(|a| Choice(a)).collect();
         let add = row![
             button(text(if self.recording { "Press keys…" } else { "Record" }).size(13))
@@ -1405,7 +1422,7 @@ impl Settings {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        column![add, container(list).padding(14).style(style::card)]
+        column![like, add, container(list).padding(14).style(style::card)]
             .spacing(16)
             .into()
     }

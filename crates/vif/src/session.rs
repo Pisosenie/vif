@@ -1,9 +1,10 @@
 //! Sessions that outlive the window. Each shell runs under a small host, `vif session-host`,
-//! that holds its PTY and the last two megabytes of what it printed, behind two Unix sockets:
-//! one carries the bytes both ways, the other sizes, the shell's pid and its end. Closing a
-//! window leaves the hosts running; the next vif attaches to them and replays what they kept.
+//! that holds its PTY and a screen of what it printed, behind two Unix sockets: one carries the
+//! bytes both ways, the other sizes, the shell's pid and its end. Closing a window leaves the
+//! hosts running; the next vif attaches to them and gets that screen painted, with what scrolled
+//! off above it, the way tmux brings a session back, rather than raw output played again.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -20,7 +21,11 @@ use alacritty_terminal::tty::{self, ChildEvent, Options, Shell};
 use polling::{Event, PollMode, Poller};
 use serde::{Deserialize, Serialize};
 
-const KEEP: usize = 2 << 20;
+use crate::screen::Screen;
+
+/// Lines a host's screen keeps after they scroll off, to paint above it: at 120 columns about
+/// as much memory as the two megabytes of output hosts used to keep.
+const HISTORY: usize = crate::screen::MOST_HISTORY;
 /// alacritty's poll keys for PTY bytes and for the child's end.
 const READ_WRITE: usize = 0;
 const CHILD: usize = 1;
@@ -67,13 +72,7 @@ pub fn start_as(spec: &Spec, id: &str) -> io::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // Its own session, so closing vif sends it no hangup.
-    // SAFETY: setsid is async-signal-safe, which is all that may run between fork and exec.
-    unsafe {
-        command.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+    detach(&mut command);
     let mut child = command.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(3);
     while !socket(id, "ctl").exists() {
@@ -84,6 +83,35 @@ pub fn start_as(spec: &Spec, id: &str) -> io::Result<()> {
     }
     std::thread::spawn(move || child.wait());
     Ok(())
+}
+
+/// Has `command` start in a session of its own, so its parent's terminal going away sends it
+/// no hangup.
+pub fn detach(command: &mut Command) {
+    // SAFETY: setsid is async-signal-safe, which is all that may run between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+}
+
+/// Why a host stopped sending to a client holding `ctl`: true when its shell ended, which the
+/// host says on every control connection before it closes, false when another client took the
+/// session over and the control connection stays quiet.
+pub fn ended(mut ctl: &UnixStream) -> bool {
+    let _ = ctl.set_nonblocking(true);
+    let mut said = Vec::new();
+    let mut buf = [0u8; 256];
+    loop {
+        match ctl.read(&mut buf) {
+            Ok(n) if n > 0 => said.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            _ => return true,
+        }
+    }
+    String::from_utf8_lossy(&said).lines().any(|l| l.starts_with("exit "))
 }
 
 /// Tells a host its terminal's new size, over its control socket.
@@ -351,9 +379,8 @@ impl OnResize for Link {
     }
 }
 
-#[derive(Default)]
 struct State {
-    ring: VecDeque<u8>,
+    screen: Screen,
     /// The window that has the session now, by its turn number.
     client: Option<(u64, UnixStream)>,
     turns: u64,
@@ -362,6 +389,19 @@ struct State {
     connections: u64,
     /// When the last window let go of it, in seconds since 1970.
     since: u64,
+}
+
+impl State {
+    fn new(cols: u16, lines: u16) -> Self {
+        Self {
+            screen: Screen::new(cols, lines, HISTORY),
+            client: None,
+            turns: 0,
+            controls: Vec::new(),
+            connections: 0,
+            since: 0,
+        }
+    }
 }
 
 /// `vif session-host ID SPEC`: holds one shell until it ends.
@@ -406,15 +446,15 @@ fn serve(args: &[String]) -> io::Result<i32> {
     }
     let tty_path = slave_name(&master).unwrap_or_default();
     let pty = Arc::new(Mutex::new(pty));
-    let state = Arc::new(Mutex::new(State::default()));
+    let state = Arc::new(Mutex::new(State::new(cols, lines)));
 
     // The machine going down stops every process: what this shell printed last is kept, so the
     // window that comes back after the restart can show it above a new shell. The shell, started
     // before this, keeps SIGTERM as usual.
     let (kept, keep_id) = (state.clone(), id.clone());
     crate::tty::on_signal(libc::SIGTERM, move || {
-        let ring: Vec<u8> = kept.lock().expect("state").ring.iter().copied().collect();
-        keep_output(&keep_id, &ring);
+        let painted = kept.lock().expect("state").screen.paint(HISTORY);
+        keep_output(&keep_id, &painted);
         // SAFETY: kill only sends a signal, to the shell this host started.
         unsafe { libc::kill(pid as i32, libc::SIGHUP) };
     });
@@ -430,9 +470,8 @@ fn serve(args: &[String]) -> io::Result<i32> {
                 continue;
             };
             let mut s = shared.lock().expect("state");
-            let ring: Vec<u8> = s.ring.iter().copied().collect();
             let mut stream = stream;
-            if stream.write_all(&replayable(&ring)).is_err() {
+            if stream.write_all(&s.screen.paint(HISTORY)).is_err() {
                 continue;
             }
             if let Some((_, old)) = s.client.take() {
@@ -494,6 +533,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                     if line.starts_with("resize ")
                         && let [cols, lines, cw, ch] = words[..]
                     {
+                        ring.lock().expect("state").screen.resize(cols, lines);
                         sizes.lock().expect("pty").on_resize(WindowSize {
                             num_lines: lines,
                             num_cols: cols,
@@ -503,11 +543,10 @@ fn serve(args: &[String]) -> io::Result<i32> {
                     } else if line == "kill" {
                         // SAFETY: kill only sends a signal, to the shell this host started.
                         unsafe { libc::kill(pid as i32, libc::SIGHUP) };
-                    } else if let Some(n) = line.strip_prefix("peek ").and_then(|n| n.parse::<usize>().ok()) {
-                        let tail: Vec<u8> = {
-                            let s = ring.lock().expect("state");
-                            s.ring.iter().skip(s.ring.len().saturating_sub(n)).copied().collect()
-                        };
+                    } else if line.starts_with("peek ") {
+                        // What's on the screen, however many bytes were asked for: a painting
+                        // cut short would leave a sequence half done.
+                        let tail = ring.lock().expect("state").screen.paint(0);
                         let head = format!("peek {}\n", tail.len());
                         if reply
                             .write_all(head.as_bytes())
@@ -531,9 +570,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
             Ok(n) => n,
         };
         let mut s = state.lock().expect("state");
-        s.ring.extend(&buf[..n]);
-        let extra = s.ring.len().saturating_sub(KEEP);
-        s.ring.drain(..extra);
+        s.screen.feed(&buf[..n]);
         if let Some((_, client)) = s.client.as_mut()
             && client.write_all(&buf[..n]).is_err()
         {
@@ -558,10 +595,12 @@ fn serve(args: &[String]) -> io::Result<i32> {
     Ok(code)
 }
 
-/// Writes a session's last output where [`crate::layouts::last_output`] finds it, readable by
-/// this user alone and with secrets taken out.
-fn keep_output(id: &str, ring: &[u8]) {
-    let text = crate::secrets::hide(&String::from_utf8_lossy(&replayable(ring)));
+/// Writes a painting of a session's screen where [`crate::layouts::last_output`] finds it,
+/// readable by this user alone and with secrets taken out. The modes it leaves are undone, since
+/// a new shell comes up under it.
+fn keep_output(id: &str, painted: &[u8]) {
+    let mut text = crate::secrets::hide(&String::from_utf8_lossy(painted));
+    text.push_str(&String::from_utf8_lossy(&crate::screen::reset()));
     let written = crate::layouts::kept_made().and_then(|dir| {
         OpenOptions::new()
             .create(true)
@@ -574,16 +613,6 @@ fn keep_output(id: &str, ring: &[u8]) {
     if let Err(err) = written {
         eprintln!("vif session-host: can't keep the output: {err}");
     }
-}
-
-/// Output to play again, without zsh's mark for a line that had no newline: a `%` and spaces to
-/// the edge of the terminal as wide as it was then. Played at another width, the spaces wrap and
-/// push the next prompt over.
-fn replayable(bytes: &[u8]) -> Vec<u8> {
-    static FILL: std::sync::LazyLock<regex::bytes::Regex> = std::sync::LazyLock::new(|| {
-        regex::bytes::Regex::new(r"(?:\x1b\[[0-9;]*m)*[%#](?:\x1b\[[0-9;]*m)* +\r \r").expect("pattern")
-    });
-    FILL.replace_all(bytes, &b""[..]).into_owned()
 }
 
 /// The terminal's own end of `master`, asked in a way that's safe from any thread: ptsname
@@ -602,16 +631,4 @@ fn slave_name(master: &File) -> Option<PathBuf> {
     // SAFETY: both calls leave a nul-terminated string in the buffer when they succeed.
     let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
     Some(PathBuf::from(name.to_string_lossy().into_owned()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zsh_line_marks_go_from_played_back_output() {
-        let ring = b"ls\r\nx\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m         \r \r\r~ > ";
-        assert_eq!(replayable(ring), b"ls\r\nx\r~ > ".to_vec());
-        assert_eq!(replayable(b"50% done\r\n"), b"50% done\r\n".to_vec());
-    }
 }

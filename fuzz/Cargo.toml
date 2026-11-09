@@ -42,3 +42,10 @@ path = "fuzz_targets/theme.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "remote"
+path = "fuzz_targets/remote.rs"
+test = false
+doc = false
+bench = false

@@ -3,6 +3,7 @@
 mod diagnostic;
 mod edit;
 pub mod import;
+mod presets;
 mod read;
 mod theme;
 pub mod themes;
@@ -12,6 +13,7 @@ use std::{env, fs, io};
 
 pub use diagnostic::{Diagnostic, Fix, fix_all, report};
 pub use edit::{Editor, setting_changed};
+pub use presets::PRESETS;
 pub use read::known;
 pub use theme::{Palette, Rgb};
 
@@ -76,6 +78,8 @@ pub struct Config {
     pub cursor: Cursor,
     pub terminal: Terminal,
     pub keys: Vec<(String, String)>,
+    /// Another terminal whose keys lie between vif's defaults and `keys`.
+    pub keys_like: Option<&'static str>,
     pub tabs: Tabs,
     pub panes: Panes,
     pub badges: Badges,
@@ -85,6 +89,22 @@ pub struct Config {
     pub quick: Quick,
     pub greeting: Greeting,
     pub ai: Ai,
+    pub ssh: Ssh,
+}
+
+/// `vif ssh`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ssh {
+    pub udp: Udp,
+}
+
+/// Whether `vif ssh` talks UDP once ssh started an agent, the way mosh does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Udp {
+    /// Tries it, and stays on ssh where it doesn't get through.
+    Auto,
+    On,
+    Off,
 }
 
 /// A language model for explaining failed commands and turning words into one. Off until it's
@@ -437,6 +457,7 @@ impl Default for Config {
                 sessions: true,
             },
             keys: Vec::new(),
+            keys_like: None,
             tabs: Tabs {
                 position: TabPosition::Top,
                 style: TabStyle::Pills,
@@ -471,6 +492,7 @@ impl Default for Config {
                 height: 0.45,
                 hide_on_blur: true,
             },
+            ssh: Ssh { udp: Udp::Auto },
             ai: Ai {
                 enabled: false,
                 url: "http://localhost:11434/v1".to_owned(),
@@ -515,17 +537,19 @@ impl Config {
         self.colors.resolve(outside.filter(|_| self.colors.apolline))
     }
 
-    /// User bindings on top of the defaults; "none" unbinds.
+    /// User bindings on top of another terminal's, on top of the defaults; "none" unbinds.
     pub fn bindings(&self) -> Vec<(String, String)> {
         let mut all: Vec<(String, String)> = default_keys()
             .iter()
             .map(|(combo, action)| (normalize_combo(combo), (*action).to_owned()))
             .collect();
-        for (combo, action) in &self.keys {
+        let like = presets::preset(self.keys_like.unwrap_or_default()).iter().copied();
+        let own = self.keys.iter().map(|(c, a)| (c.as_str(), a.as_str()));
+        for (combo, action) in like.chain(own) {
             let combo = normalize_combo(combo);
             all.retain(|(c, _)| *c != combo);
             if action != "none" {
-                all.push((combo, action.clone()));
+                all.push((combo, action.to_owned()));
             }
         }
         all

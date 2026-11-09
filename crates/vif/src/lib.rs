@@ -31,6 +31,7 @@ mod process;
 mod quick;
 mod remote;
 mod rules;
+mod screen;
 mod secrets;
 mod session;
 mod shell;
@@ -94,6 +95,7 @@ pub fn main() -> ExitCode {
         Some("session-host") => session::host(&args[1..]),
         Some("ssh") => remote::ssh(&args[1..]),
         Some("remote") => remote::remote(&args[1..]),
+        Some("udp-agent") => remote::udp_agent(&args[1..]),
         Some("--version" | "-V") => {
             println!("vif {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS

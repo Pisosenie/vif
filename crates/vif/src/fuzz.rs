@@ -34,3 +34,8 @@ pub fn pty(data: &[u8]) {
 pub fn picture(data: &[u8]) {
     let _ = crate::gifplay::decode(data, data.len().is_multiple_of(2), false, (80, 24), 2.0);
 }
+
+/// A datagram from the other end of `vif ssh` over UDP, and output for its screens.
+pub fn remote(data: &[u8]) {
+    crate::remote::fuzz(data);
+}
