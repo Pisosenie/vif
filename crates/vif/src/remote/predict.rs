@@ -10,8 +10,11 @@ use crate::screen::{Screen, goto};
 
 /// Round trips shorter than this feel instant already.
 const SLOW: Duration = Duration::from_millis(30);
-/// The least time a guess waits for its echo.
+/// The least time a guess on screen waits for its echo before it's wiped.
 const PATIENCE: Duration = Duration::from_millis(500);
+/// How long a guess not shown waits, only to tell whether guessing works on this line; nothing
+/// needs wiping, so a slow echo still counts.
+const UNSEEN: Duration = Duration::from_secs(5);
 
 struct Guess {
     col: usize,
@@ -52,9 +55,11 @@ impl Guesses {
         let mut drew = false;
         for &key in keys {
             if !(0x20..0x7f).contains(&key) {
-                // Enter, editing keys and escapes move things in ways not worth guessing.
+                // Enter, editing keys and escapes move things in ways not worth guessing, and
+                // what was guessed of the line before tells nothing of the next.
                 self.next = None;
                 self.trusted = false;
+                self.guesses.retain(|g| g.drawn);
                 continue;
             }
             let (col, line) = *self.next.get_or_insert_with(|| screen.cursor());
@@ -112,7 +117,15 @@ impl Guesses {
         let Some(patience) = self.patience else {
             return;
         };
-        if !self.guesses.iter().any(|g| now.duration_since(g.at) >= patience) {
+        if !self
+            .guesses
+            .iter()
+            .any(|g| g.drawn && now.duration_since(g.at) >= patience)
+        {
+            self.guesses.retain(|g| now.duration_since(g.at) < UNSEEN);
+            if self.guesses.is_empty() {
+                self.next = None;
+            }
             return;
         }
         let mut lines: Vec<usize> = self.guesses.iter().filter(|g| g.drawn).map(|g| g.line).collect();
@@ -128,10 +141,13 @@ impl Guesses {
         self.trusted = false;
     }
 
-    /// When the oldest guess runs out of patience.
+    /// When the next guess runs out of patience.
     pub fn due(&self) -> Option<Instant> {
         let patience = self.patience?;
-        self.guesses.first().map(|g| g.at + patience)
+        self.guesses
+            .iter()
+            .map(|g| g.at + if g.drawn { patience } else { UNSEEN })
+            .min()
     }
 
     fn leave_cursor(&self, out: &mut impl Write) {
@@ -192,6 +208,21 @@ mod tests {
         let mut drawn = Vec::new();
         guesses.typed(b"c", &screen, SLOW_TRIP, now, &mut drawn);
         assert!(drawn.is_empty());
+    }
+
+    #[test]
+    fn a_slow_echo_still_earns_trust() {
+        let mut screen = prompt();
+        let mut guesses = Guesses::default();
+        let now = Instant::now();
+        guesses.typed(b"e", &screen, SLOW_TRIP, now, &mut Vec::new());
+        // Past the patience a guess on screen gets, but this one was never shown.
+        guesses.expire(&screen, now + Duration::from_secs(2), &mut Vec::new());
+        screen.feed(b"e");
+        guesses.after_output(&screen, &mut Vec::new());
+        let mut drawn = Vec::new();
+        guesses.typed(b"c", &screen, SLOW_TRIP, now, &mut drawn);
+        assert!(!drawn.is_empty());
     }
 
     #[test]
