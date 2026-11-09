@@ -18,13 +18,13 @@ impl Changes {
     /// Waits for the network to change and settle; Err when the socket can't be read any more.
     pub fn next(&self) -> io::Result<()> {
         let mut buf = [0u8; 8192];
-        self.read(&mut buf, None)?;
-        while self.read(&mut buf, Some(SETTLE))? {}
+        while !self.read(&mut buf, None)?.is_some_and(|n| matters(&buf[..n])) {}
+        while self.read(&mut buf, Some(SETTLE))?.is_some() {}
         Ok(())
     }
 
-    /// Reads one message, waiting at most `wait`; false when none came in time.
-    fn read(&self, buf: &mut [u8], wait: Option<Duration>) -> io::Result<bool> {
+    /// Reads one message, waiting at most `wait`: its length, or None when none came in time.
+    fn read(&self, buf: &mut [u8], wait: Option<Duration>) -> io::Result<Option<usize>> {
         let fd = self.0.as_raw_fd();
         if let Some(wait) = wait {
             let mut poll = libc::pollfd {
@@ -38,19 +38,19 @@ impl Changes {
                 return Err(io::Error::last_os_error());
             }
             if n == 0 {
-                return Ok(false);
+                return Ok(None);
             }
         }
         loop {
             // SAFETY: reads into a buffer of the length given.
             let n = unsafe { libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), 0) };
             if n >= 0 {
-                return Ok(true);
+                return Ok(Some(n as usize));
             }
             let err = io::Error::last_os_error();
-            // A burst bigger than the socket's buffer is still a change.
+            // A burst bigger than the socket's buffer is still a change, of whatever kind.
             if err.raw_os_error() == Some(libc::ENOBUFS) {
-                return Ok(true);
+                return Ok(Some(0));
             }
             if err.kind() != io::ErrorKind::Interrupted {
                 return Err(err);
@@ -66,6 +66,29 @@ fn owned(fd: libc::c_int) -> io::Result<OwnedFd> {
     }
     // SAFETY: a socket just made, which nothing else owns.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Whether a message is about addresses, routes or interfaces. Linux only sends those, by the
+/// groups asked for; macOS sends every routing message, lookups and misses included.
+#[cfg(target_os = "linux")]
+fn matters(_: &[u8]) -> bool {
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn matters(message: &[u8]) -> bool {
+    // rtm_type is the fourth byte of every routing message; an empty read was a lost burst.
+    message.get(3).is_none_or(|&kind| {
+        [
+            libc::RTM_ADD,
+            libc::RTM_DELETE,
+            libc::RTM_CHANGE,
+            libc::RTM_NEWADDR,
+            libc::RTM_DELADDR,
+            libc::RTM_IFINFO,
+        ]
+        .contains(&i32::from(kind))
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -114,5 +137,16 @@ mod tests {
     #[test]
     fn the_system_lets_us_listen() {
         assert!(super::Changes::watch().is_ok());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lookups_and_misses_are_no_change() {
+        let message = |kind: i32| [0, 0, 5, kind as u8];
+        assert!(super::matters(&message(libc::RTM_NEWADDR)));
+        assert!(super::matters(&message(libc::RTM_DELETE)));
+        assert!(!super::matters(&message(libc::RTM_MISS)));
+        assert!(!super::matters(&message(libc::RTM_GET)));
+        assert!(super::matters(&[]));
     }
 }
