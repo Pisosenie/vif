@@ -103,6 +103,12 @@ impl Cut {
         std::thread::spawn(move || {
             let to = link.address();
             let _ = watching.to.set(to);
+            // The first ssh may have started before the address was known.
+            if let Ok(mut running) = watching.running.lock()
+                && let Some((_, from @ None)) = running.as_mut()
+            {
+                *from = to.and_then(source);
+            }
             if let (Some(_), Ok(changes)) = (to, Changes::watch()) {
                 while changes.next().is_ok() {
                     watching.changed();
