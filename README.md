@@ -44,9 +44,11 @@ What is kept stays on this machine in files only you can read (0600, in a 0700 f
 
 ![The sessions dialog: every shell as a card with what is on its screen, which window has it, and one left running after its window closed](docs/sessions.png)
 
-Each shell runs under a small host process, so closing the window or quitting vif leaves it running, and the next vif brings it back in the same windows, tabs and splits with its scrollback and variables, like tmux without tmux. A host starts in about 11 ms and output through it is no slower; closing a tab or typing `exit` ends one for good. Even a restart doesn't lose the windows: they come back with their tabs and splits, a new shell in each pane's folder, and what the old one printed last above it. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets it go and leaves it running, ctrl-R names it, and `vif attach build` opens it from anywhere. `sessions = false` turns it all off.
+Each shell runs under a small host process, so closing the window or quitting vif leaves it running, and the next vif brings it back in the same windows, tabs and splits with its scrollback and variables, like tmux without tmux. The host keeps a screen of what the shell printed, as tmux does, so a session comes back painted as it is, a full-screen program included, with the last thousand lines above it and commands still blocks. A host starts in about 11 ms and output through it is no slower; closing a tab or typing `exit` ends one for good. Even a restart doesn't lose the windows: they come back with their tabs and splits, a new shell in each pane's folder, and what the old one printed last above it. ⇧⌘S shows every session as a card with what is on its screen: Enter takes one here, ctrl-Enter into a window of its own, ctrl-D lets it go and leaves it running, ctrl-R names it, and `vif attach build` opens it from anywhere. `sessions = false` turns it all off.
 
-On another machine too: `vif ssh prod` opens a shell on `prod` that lives in a session there, so a dropped connection, a laptop lid or a train tunnel loses nothing. vif connects again by itself and the screen comes back as it was; `vif ssh prod build` names the session, and the same command later takes it back from anywhere. The shell over there gets vif's shell integration, so commands are blocks there as here. It needs vif installed on that machine as well, and nothing else: no daemon, no open port, only ssh.
+On another machine too: `vif ssh prod` opens a shell on `prod` that lives in a session there, so a dropped connection, a laptop lid or a train tunnel loses nothing. vif connects again by itself and the screen comes back as it was; `vif ssh prod build` names the session, and the same command later takes it back from anywhere. The shell over there gets vif's shell integration, so commands are blocks there as here. It needs vif installed on that machine as well.
+
+Where UDP gets through, `vif ssh` goes the way mosh does: ssh only starts an agent over there and brings back its port and a one-time key, and from then on keys and output travel as encrypted datagrams (ChaCha20-Poly1305). The laptop can sleep, move from Wi-Fi to a phone's hotspot or change its address, and the shell is there the moment it wakes, with no new connection to wait for. Unlike mosh, the output passes through untouched, so your terminal's scrollback keeps all of it; after a long time away the agent paints the screen afresh with the lines that scrolled by. On a slow link, what you type shows underlined before the echo comes back, and only once a guess in that line came true, so a password prompt stays blank. The agent takes a port from 60000 to 61000, the range mosh uses, so firewall rules made for mosh work; where nothing comes back, `vif ssh` stays on ssh and remembers that host until the next reboot. ctrl-^ `.` leaves the shell running and quits; `[ssh] udp = "off"`, or `--no-udp` once, keeps to ssh, and `--udp` insists. Over plain ssh, vif keeps the link alive with keepalives unless your ssh config sets its own, and reconnects at once when the network moves this machine to another address.
 
 ## A quick terminal
 
@@ -368,6 +370,9 @@ model = "qwen2.5-coder:7b"
 key_env = ""               # the environment variable with an API key, like "OPENAI_API_KEY"
 send = 8000                # the most characters of a command's output one question sends
 
+[ssh]
+udp = "auto"               # `vif ssh` over UDP where it gets through, like mosh; "on" insists, "off" keeps to ssh
+
 [greeting]
 show = "off"               # "window" plays it in each new window's first shell, "always" in every new shell
 file = ""                  # a GIF, PNG or JPEG, like "~/Pictures/cat.gif"
@@ -382,6 +387,7 @@ height = 0.45
 hide_on_blur = true
 
 [keys]
+like = "kitty"             # another terminal's keys under yours: "kitty", "wezterm" or "ghostty"
 "cmd+shift+t" = "new_tab"  # an action, or "none" to free a default
 ```
 

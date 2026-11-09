@@ -291,6 +291,104 @@ impl Marker {
     }
 }
 
+/// What comes after `ESC ]` in a mark.
+const HEAD: &[u8] = b"133;";
+
+/// Takes marks out of output on its way to a grid kept without a window, a session host's or a
+/// UDP agent's, leaving tags where [`Marker`] puts them, so a painting of that grid can put the
+/// marks back. The PTY filter does the same for a window, with pictures besides.
+pub struct Scanner {
+    marker: Marker,
+    scan: Scan,
+}
+
+enum Scan {
+    Text,
+    Escape,
+    Head(Vec<u8>),
+    Body(Vec<u8>),
+    BodyEscape(Vec<u8>),
+}
+
+impl Scanner {
+    pub fn new(blocks: std::sync::Arc<Blocks>) -> Self {
+        Self {
+            marker: Marker::new(blocks),
+            scan: Scan::Text,
+        }
+    }
+
+    pub fn feed(&mut self, input: &[u8], out: &mut VecDeque<u8>) {
+        let mut i = 0;
+        while i < input.len() {
+            match &mut self.scan {
+                Scan::Text => match memchr::memchr(0x1b, &input[i..]) {
+                    Some(at) => {
+                        self.marker.emit(&input[i..i + at], out);
+                        i += at + 1;
+                        self.scan = Scan::Escape;
+                    }
+                    None => {
+                        self.marker.emit(&input[i..], out);
+                        i = input.len();
+                    }
+                },
+                Scan::Escape => {
+                    if input[i] == b']' {
+                        self.scan = Scan::Head(Vec::new());
+                    } else {
+                        self.marker.emit(&[0x1b, input[i]], out);
+                        self.scan = Scan::Text;
+                    }
+                    i += 1;
+                }
+                Scan::Head(head) => {
+                    head.push(input[i]);
+                    i += 1;
+                    if head.as_slice() == HEAD {
+                        self.scan = Scan::Body(Vec::new());
+                    } else if !HEAD.starts_with(head) {
+                        let mut bytes = b"\x1b]".to_vec();
+                        bytes.append(head);
+                        self.marker.emit(&bytes, out);
+                        self.scan = Scan::Text;
+                    }
+                }
+                Scan::Body(body) => match memchr::memchr2(0x07, 0x1b, &input[i..]) {
+                    Some(at) => {
+                        body.extend_from_slice(&input[i..i + at]);
+                        let body = std::mem::take(body);
+                        let bell = input[i + at] == 0x07;
+                        i += at + 1;
+                        if bell {
+                            self.marker.mark(&body, out);
+                            self.scan = Scan::Text;
+                        } else {
+                            self.scan = Scan::BodyEscape(body);
+                        }
+                    }
+                    None => {
+                        if body.len() < 1024 {
+                            body.extend_from_slice(&input[i..]);
+                        }
+                        i = input.len();
+                    }
+                },
+                Scan::BodyEscape(body) => {
+                    let body = std::mem::take(body);
+                    self.marker.mark(&body, out);
+                    if input[i] == b'\\' {
+                        i += 1;
+                        self.scan = Scan::Text;
+                    } else {
+                        self.scan = Scan::Escape;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

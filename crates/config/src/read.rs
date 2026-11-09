@@ -5,13 +5,13 @@ use toml::de::{DeString, DeTable, DeValue};
 
 use crate::{
     ACTIONS, BadgeShow, Config, CursorShape, Decorations, Diagnostic, Divider, Fit, GreetingShow, OptionAsAlt, Osc52,
-    Rgb, TabPosition, TabShow, TabStyle, themes,
+    PRESETS, Rgb, TabPosition, TabShow, TabStyle, Udp, themes,
 };
 
 type Key<'i> = Spanned<DeString<'i>>;
 type Value<'i> = Spanned<DeValue<'i>>;
 
-const SECTIONS: [&str; 14] = [
+const SECTIONS: [&str; 15] = [
     "font",
     "colors",
     "window",
@@ -26,8 +26,11 @@ const SECTIONS: [&str; 14] = [
     "quick",
     "greeting",
     "ai",
+    "ssh",
 ];
 const QUICK: [&str; 3] = ["key", "height", "hide_on_blur"];
+const SSH: [&str; 1] = ["udp"];
+const UDP: [(&str, Udp); 3] = [("auto", Udp::Auto), ("on", Udp::On), ("off", Udp::Off)];
 const AI: [&str; 5] = ["enabled", "url", "model", "key_env", "send"];
 const GREETING: [&str; 6] = ["show", "file", "blocks", "info", "height", "loops"];
 const GREETING_SHOW: [(&str, GreetingShow); 3] = [
@@ -139,7 +142,9 @@ const OPTION_AS_ALT: [(&str, OptionAsAlt); 4] = [
 
 /// Every key vif.toml knows, as `section.key`, and the top-level ones bare.
 pub fn known() -> Vec<String> {
-    let sections: [(&str, &[&str]); 13] = [
+    let sections: [(&str, &[&str]); 15] = [
+        ("ssh", &SSH),
+        ("keys", &["like"]),
         ("font", &FONT),
         ("colors", &COLORS),
         ("window", &WINDOW),
@@ -240,6 +245,7 @@ impl Reader<'_> {
                 "quick" => self.quick(section, config),
                 "greeting" => self.greeting(section, config),
                 "ai" => self.ai(section, config),
+                "ssh" => self.ssh(section, config),
                 _ => self.keys(section, config),
             }
         }
@@ -394,6 +400,15 @@ impl Reader<'_> {
                 "height" => quick.height = self.float(key, value, 0.15..=1.0).unwrap_or(quick.height),
                 "hide_on_blur" => quick.hide_on_blur = self.boolean(key, value).unwrap_or(quick.hide_on_blur),
                 _ => self.unknown(key, "quick setting", &QUICK),
+            }
+        }
+    }
+
+    fn ssh(&mut self, table: &DeTable, config: &mut Config) {
+        for (key, value) in table.iter() {
+            match key.get_ref().as_ref() {
+                "udp" => config.ssh.udp = self.choice(key, value, &UDP).unwrap_or(config.ssh.udp),
+                _ => self.unknown(key, "ssh setting", &SSH),
             }
         }
     }
@@ -770,6 +785,10 @@ impl Reader<'_> {
         let mut known: Vec<&str> = ACTIONS.to_vec();
         known.push("none");
         for (combo, value) in table.iter() {
+            if combo.get_ref() == "like" {
+                config.keys_like = self.choice(combo, value, &PRESETS.map(|p| (p, p))).or(config.keys_like);
+                continue;
+            }
             let Some(action) = self.string(combo, value) else {
                 continue;
             };
@@ -908,7 +927,7 @@ impl Reader<'_> {
         }
         let message = format!("“{text}” is not a valid {}", key.get_ref());
         let mut d = Diagnostic::new(self.line(value.span()), message).at(value.span());
-        d = match suggest(text, &names) {
+        d = match suggest(&text.to_ascii_lowercase(), &names) {
             Some(close) => d
                 .hint(format!("did you mean “{close}”?"))
                 .fix(value.span(), format!("\"{close}\"")),
@@ -1084,6 +1103,25 @@ mod tests {
         let (config, diagnostics) = document(src);
         assert!(!diagnostics.is_empty());
         assert_eq!(config.font.size, 15.0);
+    }
+
+    #[test]
+    fn keys_like_another_terminal_lie_under_your_own() {
+        let src = "[keys]\nlike = \"kitty\"\n\"ctrl+shift+x\" = \"zoom\"\n";
+        let (config, diagnostics) = document(src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(config.keys_like, Some("kitty"));
+        let bindings = config.bindings();
+        if cfg!(not(target_os = "macos")) {
+            assert!(
+                bindings
+                    .iter()
+                    .any(|(c, a)| c == "ctrl+shift+z" && a == "prompt_previous")
+            );
+        }
+        assert!(bindings.iter().any(|(c, a)| c == "ctrl+shift+x" && a == "zoom"));
+        let (_, diagnostics) = document("[keys]\nlike = \"Kity\"\n");
+        assert_eq!(diagnostics[0].hint.as_deref(), Some("did you mean “kitty”?"));
     }
 
     #[test]

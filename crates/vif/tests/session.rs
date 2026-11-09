@@ -158,9 +158,8 @@ fn peeks_answer_and_leave_nothing_open() {
     data.write_all(b"printf 'tail-of-it'\n").unwrap();
     until(&mut data, "tail-of-it$");
     let (mut ctl, _) = host.control();
-    let tail = peek(&mut ctl, 10);
-    assert_eq!(tail.len(), 10);
-    assert!(String::from_utf8_lossy(&peek(&mut ctl, 4096)).contains("tail-of-it"));
+    // The screen whole, however little was asked for, so no sequence is cut in half.
+    assert!(String::from_utf8_lossy(&peek(&mut ctl, 10)).contains("tail-of-it"));
 
     // More peeks than a host may have files open: each one closed must let go of its socket.
     for _ in 0..300 {
@@ -169,6 +168,27 @@ fn peeks_answer_and_leave_nothing_open() {
     }
     data.write_all(b"echo still-here\n").unwrap();
     until(&mut data, "still-here");
+}
+
+#[test]
+fn coming_back_paints_the_screen_as_it_is_rather_than_the_bytes_again() {
+    let host = Host::start("paint");
+    let (mut ctl, _) = host.control();
+    let mut data = host.attach();
+    // A full-screen program, as far as the terminal can tell, that's still running.
+    data.write_all(b"printf '\\033[?1049h\\033[2;3Hfull-%s' screen; sleep 30\n")
+        .unwrap();
+    until(&mut data, "full-screen");
+    drop(data);
+    // The window comes back narrower than the program drew for.
+    ctl.write_all(b"resize 40 12 8 16\n").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let mut again = host.attach();
+    let painted = until(&mut again, "full-screen");
+    // The shell's screen first, with the command that started the program, then the program's.
+    let program = painted.rfind("\x1b[?1049h").expect("the alternate screen");
+    assert!(painted.find("printf").is_some_and(|at| at < program), "{painted:?}");
+    assert!(painted.contains("\x1b[2;1H\x1b[0m  full-screen"), "{painted:?}");
 }
 
 #[test]
