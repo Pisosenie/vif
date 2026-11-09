@@ -94,7 +94,34 @@ pub struct Screen {
     blocks: Arc<Blocks>,
     /// Output on its way from the scanner to the grid.
     scanned: VecDeque<u8>,
+    /// The ordinary screen while a full-screen program has the other one.
+    under: Option<Under>,
 }
+
+/// The ordinary screen as a full-screen program found it, which no grid here shows while that
+/// program runs: its lines, those that scrolled off first, and how it was left.
+struct Under {
+    history: Vec<String>,
+    screen: Vec<String>,
+    finish: String,
+}
+
+impl Under {
+    /// Written down from the top, the old lines scroll up into the terminal's scrollback and
+    /// the screen's own end up where they were.
+    fn write(&self, out: &mut String, history: usize) {
+        let history = &self.history[self.history.len().saturating_sub(history)..];
+        for (i, row) in history.iter().chain(&self.screen).enumerate() {
+            if i > 0 {
+                out.push_str("\r\n");
+            }
+            out.push_str(row);
+        }
+    }
+}
+
+/// What turns the other screen on, after which the ordinary one stays as it was.
+const ALTERNATE: [&[u8]; 3] = [b"\x1b[?1049h", b"\x1b[?1047h", b"\x1b[?47h"];
 
 impl Screen {
     /// A blank screen keeping `history` lines that scroll off.
@@ -112,15 +139,26 @@ impl Screen {
             marks: Scanner::new(blocks.clone()),
             blocks,
             scanned: VecDeque::new(),
+            under: None,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.marks.feed(bytes, &mut self.scanned);
-        let (a, b) = self.scanned.as_slices();
-        self.parser.advance(&mut self.term, a);
-        self.parser.advance(&mut self.term, b);
-        self.scanned.clear();
+        let scanned: Vec<u8> = self.scanned.drain(..).collect();
+        let mut rest = scanned.as_slice();
+        // The ordinary screen is kept as it is the moment a full-screen program takes over.
+        if !self.alternate()
+            && let Some(at) = ALTERNATE.iter().filter_map(|seq| memchr::memmem::find(rest, seq)).min()
+        {
+            self.parser.advance(&mut self.term, &rest[..at]);
+            self.under = Some(self.ordinary(usize::MAX));
+            rest = &rest[at..];
+        }
+        self.parser.advance(&mut self.term, rest);
+        if !self.alternate() {
+            self.under = None;
+        }
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -159,27 +197,43 @@ impl Screen {
     /// after the last `history` lines that scrolled off, and leave it in the same modes.
     pub fn paint(&self, history: usize) -> Vec<u8> {
         let mut out = String::from("\x1b[0m\x1b[r\x1b[?1049l\x1b[H\x1b[2J");
-        let lines = self.term.screen_lines() as i32;
-        let mut painted = Painted::default();
         if self.alternate() {
+            // The ordinary screen first, so it's there again when the program ends.
+            if let Some(under) = &self.under {
+                under.write(&mut out, history);
+                out.push_str(&under.finish);
+            }
             out.push_str("\x1b[?1049h\x1b[H\x1b[2J");
-            for line in 0..lines {
-                out.push_str(&goto(0, line as usize));
-                self.row(&mut out, Line(line), Some(&mut painted));
+            let mut painted = Painted::default();
+            for line in 0..self.term.screen_lines() {
+                out.push_str(&goto(0, line));
+                self.row(&mut out, Line(line as i32), Some(&mut painted));
             }
         } else {
-            let history = history.min(self.history()) as i32;
-            // Written down from the top, the old lines scroll up into the terminal's scrollback
-            // and the screen's own end up where they are here.
-            for line in -history..lines {
-                if line > -history {
-                    out.push_str("\r\n");
-                }
-                self.row(&mut out, Line(line), Some(&mut painted));
-            }
+            self.ordinary(history).write(&mut out, history);
         }
         self.finish(&mut out);
         out.into_bytes()
+    }
+
+    /// The ordinary screen as it stands, with up to `history` lines that scrolled off.
+    fn ordinary(&self, history: usize) -> Under {
+        let mut painted = Painted::default();
+        let mut row = |line: i32| {
+            let mut out = String::new();
+            self.row(&mut out, Line(line), Some(&mut painted));
+            out
+        };
+        let history = history.min(self.history()) as i32;
+        Under {
+            history: (-history..0).map(&mut row).collect(),
+            screen: (0..self.term.screen_lines() as i32).map(row).collect(),
+            finish: {
+                let mut finish = String::new();
+                self.finish(&mut finish);
+                finish
+            },
+        }
     }
 
     /// Escape codes that paint one line of the screen in place, leaving the cursor and its
@@ -398,6 +452,9 @@ mod tests {
         assert_eq!(text(&here), text(&there));
         assert_eq!(here.cursor(), there.cursor());
         assert!(here.term.mode().contains(TermMode::APP_CURSOR));
+        // When the program ends, the shell's screen is under it, as it was.
+        here.feed(b"\x1b[?1049l");
+        assert_eq!(text(&here)[0], "shell");
     }
 
     #[test]

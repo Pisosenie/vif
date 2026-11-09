@@ -185,9 +185,9 @@ fn coming_back_paints_the_screen_as_it_is_rather_than_the_bytes_again() {
     std::thread::sleep(Duration::from_millis(100));
     let mut again = host.attach();
     let painted = until(&mut again, "full-screen");
-    assert!(painted.contains("\x1b[?1049h"), "{painted:?}");
-    // The command that started it was on the other screen, so it isn't played back.
-    assert!(!painted.contains("printf"), "{painted:?}");
+    // The shell's screen first, with the command that started the program, then the program's.
+    let program = painted.rfind("\x1b[?1049h").expect("the alternate screen");
+    assert!(painted.find("printf").is_some_and(|at| at < program), "{painted:?}");
     assert!(painted.contains("\x1b[2;1H\x1b[0m  full-screen"), "{painted:?}");
 }
 
