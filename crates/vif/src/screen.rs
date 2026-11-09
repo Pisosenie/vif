@@ -300,16 +300,19 @@ impl Screen {
             if let Some((id, block)) = before.and_then(|id| Some((id, self.blocks.get(id)?))) {
                 // A command that printed nothing has no cell to carry where its output began.
                 if painted.output != Some(id) {
-                    out.push_str("\x1b]133;C\x07");
+                    output(out, &block);
                 }
-                if let Some((_, exit)) = block.ended {
-                    let _ = write!(out, "\x1b]133;D;{exit}\x07");
+                if let Some((took, exit)) = block.ended {
+                    let _ = write!(out, "\x1b]133;D;{exit};{}{}\x07", marks::TOOK, took.as_millis());
                 }
             }
             out.push_str("\x1b]133;A\x07");
         }
         if let Some(id) = marks::find(zerowidth, Kind::Output) {
-            out.push_str("\x1b]133;C\x07");
+            match self.blocks.get(id) {
+                Some(block) => output(out, &block),
+                None => out.push_str("\x1b]133;C\x07"),
+            }
             painted.output = Some(id);
         }
     }
@@ -335,6 +338,11 @@ impl Screen {
         }
         out.push_str(&self.back_to_cursor());
     }
+}
+
+/// The mark where a command's output starts, with when it started.
+fn output(out: &mut String, block: &marks::Block) {
+    let _ = write!(out, "\x1b]133;C;{}{}\x07", marks::STARTED, marks::millis(block.at));
 }
 
 /// SGR that writes in a cell's look, from plain.
@@ -464,7 +472,8 @@ mod tests {
         let painted = there.paint(100);
         let text = String::from_utf8_lossy(&painted);
         assert!(text.contains("\x1b]133;A\x07$ \x1b]133;B\x07false"), "{text:?}");
-        assert!(text.contains("\x1b]133;D;1\x07\x1b]133;A\x07$"), "{text:?}");
+        assert!(text.contains("\x1b]133;D;1;vif.took="), "{text:?}");
+        assert!(text.contains("\x1b]133;C;vif.at="), "{text:?}");
 
         // A window taking the painting in finds the command that failed, as it ended.
         let blocks = Arc::new(Blocks::default());

@@ -99,14 +99,18 @@ impl Blocks {
         std::mem::take(&mut self.inner.lock().expect("blocks").done)
     }
 
-    fn start(&self, id: u32) {
+    /// A command starting now, or at `at` when a painting says it started earlier.
+    fn start(&self, id: u32, at: Option<SystemTime>) {
         let mut inner = self.inner.lock().expect("blocks");
         inner.last = Some(id);
+        let now = SystemTime::now();
+        let at = at.unwrap_or(now);
+        let ago = now.duration_since(at).unwrap_or_default();
         inner.map.insert(
             id,
             Block {
-                started: Instant::now(),
-                at: SystemTime::now(),
+                started: Instant::now().checked_sub(ago).unwrap_or_else(Instant::now),
+                at,
                 ended: None,
             },
         );
@@ -116,12 +120,13 @@ impl Blocks {
         }
     }
 
-    fn end(&self, id: u32, exit: i32) {
+    /// A command ending now, having taken `took` when a painting says so.
+    fn end(&self, id: u32, exit: i32, took: Option<Duration>) {
         let mut inner = self.inner.lock().expect("blocks");
         if let Some(block) = inner.map.get_mut(&id)
             && block.ended.is_none()
         {
-            block.ended = Some((block.started.elapsed(), exit));
+            block.ended = Some((took.unwrap_or_else(|| block.started.elapsed()), exit));
             inner.done.push(id);
         }
     }
@@ -246,7 +251,8 @@ impl Marker {
                 out.extend(encode(Kind::Command, self.current).as_bytes());
             }
             Some(b"C") if self.current != 0 => {
-                self.blocks.start(self.current);
+                let at = param(parts, STARTED).map(|ms| SystemTime::UNIX_EPOCH + Duration::from_millis(ms));
+                self.blocks.start(self.current, at);
                 self.running = true;
                 self.wait(Kind::Output);
             }
@@ -259,7 +265,8 @@ impl Marker {
                         .next()
                         .and_then(|code| std::str::from_utf8(code).ok()?.parse().ok())
                         .unwrap_or(0);
-                    self.blocks.end(self.current, exit);
+                    let took = param(parts, TOOK).map(Duration::from_millis);
+                    self.blocks.end(self.current, exit, took);
                     self.running = false;
                 }
             }
@@ -289,6 +296,25 @@ impl Marker {
         }
         out.extend(bytes);
     }
+}
+
+/// What vif adds to a mark it puts back from a painting, for the times a shell's own marks
+/// don't carry: when a command started, in milliseconds since 1970, and how long it took.
+pub const STARTED: &str = "vif.at=";
+pub const TOOK: &str = "vif.took=";
+
+fn param<'a>(mut parts: impl Iterator<Item = &'a [u8]>, key: &str) -> Option<u64> {
+    parts.find_map(|part| {
+        std::str::from_utf8(part.strip_prefix(key.as_bytes())?)
+            .ok()?
+            .parse()
+            .ok()
+    })
+}
+
+/// Milliseconds since 1970, as [`STARTED`] carries them.
+pub fn millis(at: SystemTime) -> u128 {
+    at.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis())
 }
 
 /// What comes after `ESC ]` in a mark.
@@ -416,6 +442,25 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn a_painting_keeps_when_a_command_ran_and_how_long() {
+        let blocks = Arc::new(Blocks::default());
+        let mut marker = Marker::new(blocks.clone());
+        run(
+            &mut marker,
+            &[
+                ("A", "$ "),
+                ("B", "make"),
+                ("C;vif.at=1700000000000", "built\r\n"),
+                ("D;2;vif.took=83000", ""),
+            ],
+        );
+        let block = blocks.get(blocks.last().unwrap()).unwrap();
+        assert_eq!(block.ended.map(|(took, exit)| (took.as_secs(), exit)), Some((83, 2)));
+        assert_eq!(millis(block.at), 1_700_000_000_000);
+        assert_eq!(millis(block.finished_at()), 1_700_000_083_000);
     }
 
     #[test]
