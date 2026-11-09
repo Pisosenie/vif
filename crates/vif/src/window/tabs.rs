@@ -7,6 +7,7 @@ use vif_render::{Rect, Scene, Style};
 use super::Win;
 use crate::colors::mix;
 use crate::layout::Area;
+use crate::rules::Place;
 
 impl Win {
     /// Room above and below the panes: the tab bar's, or the quick terminal's header.
@@ -124,19 +125,23 @@ impl Win {
         let place = pane.location();
         let title = match &pane.name {
             Some(name) => name.clone(),
-            None => title_text(
-                &format,
-                index + 1,
-                pane.title.as_deref(),
-                place.cwd.as_deref(),
-                place.host.as_deref(),
-            ),
+            None => title_text(&format, index + 1, pane.title.as_deref(), &place),
         };
         let detail = match (&place.running, &place.cwd) {
             _ if !self.config.tabs.detail => String::new(),
             (Some(running), _) => running.clone(),
             (None, Some(cwd)) if !format.contains("{cwd}") => crate::tilde(cwd),
             _ => String::new(),
+        };
+        // The branch follows the folder, quieter still, unless the title says it already.
+        let detail = match place
+            .branch
+            .as_deref()
+            .filter(|_| self.config.tabs.detail && !format.contains("{branch}"))
+        {
+            Some(branch) if detail.is_empty() => branch.to_owned(),
+            Some(branch) if place.running.is_none() => format!("{detail} · {branch}"),
+            _ => detail,
         };
         let detail = match (self.tabs[index].zoomed, detail.is_empty()) {
             (false, _) => detail,
@@ -178,17 +183,11 @@ pub(super) fn insets(config: &Config, scale: f32, tabs: usize) -> (f32, f32) {
     ((top * scale).round(), (bottom * scale).round())
 }
 
-/// Fills in {index}, {title}, {cwd} and {dir}, and drops the gaps a missing part leaves. Over
-/// ssh, {dir} is the host.
-pub(super) fn title_text(
-    format: &str,
-    index: usize,
-    title: Option<&str>,
-    cwd: Option<&std::path::Path>,
-    host: Option<&str>,
-) -> String {
-    let cwd_text = cwd.map(crate::tilde);
-    let dir_text = host.map(str::to_owned).or_else(|| {
+/// Fills in {index}, {title}, {cwd}, {dir} and {branch}, and drops the gaps a missing part
+/// leaves. Over ssh, {dir} is the host.
+pub(super) fn title_text(format: &str, index: usize, title: Option<&str>, place: &Place) -> String {
+    let cwd_text = place.cwd.as_deref().map(crate::tilde);
+    let dir_text = place.host.clone().or_else(|| {
         cwd_text.as_deref().map(|c| match c.rsplit('/').next() {
             Some("") => "/".to_owned(),
             Some(last) => last.to_owned(),
@@ -199,28 +198,54 @@ pub(super) fn title_text(
         .replace("{index}", &index.to_string())
         .replace("{title}", title.unwrap_or("vif"))
         .replace("{cwd}", cwd_text.as_deref().unwrap_or(""))
-        .replace("{dir}", dir_text.as_deref().unwrap_or(""));
+        .replace("{dir}", dir_text.as_deref().unwrap_or(""))
+        .replace("{branch}", place.branch.as_deref().unwrap_or(""));
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::title_text;
+    use crate::rules::Place;
     use std::path::{Path, PathBuf};
+
+    fn at(cwd: Option<&Path>, host: Option<&str>, branch: Option<&str>) -> Place {
+        Place {
+            cwd: cwd.map(Path::to_owned),
+            host: host.map(str::to_owned),
+            branch: branch.map(str::to_owned),
+            ..Place::default()
+        }
+    }
 
     #[test]
     fn tab_titles_fill_in_and_close_gaps() {
         let home = PathBuf::from(std::env::var_os("HOME").unwrap());
         let cwd = home.join("src/vif");
-        assert_eq!(title_text("{index} {title}", 2, Some("nvim"), None, None), "2 nvim");
-        assert_eq!(title_text("{index} {dir}", 1, None, Some(&cwd), None), "1 vif");
+        let nowhere = Place::default();
+        assert_eq!(title_text("{index} {title}", 2, Some("nvim"), &nowhere), "2 nvim");
         assert_eq!(
-            title_text("[{index}] {cwd}", 3, None, Some(&cwd), None),
+            title_text("{index} {dir}", 1, None, &at(Some(&cwd), None, None)),
+            "1 vif"
+        );
+        assert_eq!(
+            title_text("[{index}] {cwd}", 3, None, &at(Some(&cwd), None, None)),
             "[3] ~/src/vif"
         );
-        assert_eq!(title_text("{dir}", 1, None, Some(&home), None), "~");
-        assert_eq!(title_text("{dir}", 1, None, Some(Path::new("/")), None), "/");
-        assert_eq!(title_text("{index} {dir} {title}", 4, Some("zsh"), None, None), "4 zsh");
-        assert_eq!(title_text("{dir}", 1, None, Some(&cwd), Some("devbox")), "devbox");
+        assert_eq!(title_text("{dir}", 1, None, &at(Some(&home), None, None)), "~");
+        assert_eq!(title_text("{dir}", 1, None, &at(Some(Path::new("/")), None, None)), "/");
+        assert_eq!(title_text("{index} {dir} {title}", 4, Some("zsh"), &nowhere), "4 zsh");
+        assert_eq!(
+            title_text("{dir}", 1, None, &at(Some(&cwd), Some("devbox"), None)),
+            "devbox"
+        );
+        assert_eq!(
+            title_text("{dir} {branch}", 1, None, &at(Some(&cwd), None, Some("main"))),
+            "vif main"
+        );
+        assert_eq!(
+            title_text("{dir} {branch}", 1, None, &at(Some(&cwd), None, None)),
+            "vif"
+        );
     }
 }

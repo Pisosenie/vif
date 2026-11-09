@@ -319,7 +319,7 @@ pub struct Tabs {
     pub position: TabPosition,
     pub style: TabStyle,
     pub show: TabShow,
-    /// What a tab says: {index}, {title}, {cwd} and {dir} are filled in.
+    /// What a tab says: {index}, {title}, {cwd}, {dir} and {branch} are filled in.
     pub title: String,
     /// A quieter second part after the title: what runs there, or its folder.
     pub detail: bool,
@@ -392,6 +392,8 @@ pub struct Rule {
     pub host: Option<String>,
     /// A folder pattern, like "~/work/infra*"; folders inside it match too.
     pub dir: Option<String>,
+    /// A git branch pattern, like "release/*", for a folder in a repository.
+    pub branch: Option<String>,
     pub theme: Option<String>,
     pub accent: Option<Rgb>,
     pub background: Option<Rgb>,

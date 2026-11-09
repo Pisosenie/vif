@@ -282,8 +282,9 @@ impl Settings {
             .menu_style(style::menu);
             col = col.push(
                 row![
-                    input("host", "host, like prod-*", rule.host.clone(), 170.0),
-                    input("dir", "or a folder", rule.dir.clone(), 170.0),
+                    input("host", "host, like prod-*", rule.host.clone(), 150.0),
+                    input("dir", "or a folder", rule.dir.clone(), 150.0),
+                    input("branch", "or a branch", rule.branch.clone(), 120.0),
                     theme,
                     input("accent", "#rrggbb", rule.accent.map(|c| c.to_hex()), 100.0),
                     input("label", "label", rule.label.clone(), 90.0),

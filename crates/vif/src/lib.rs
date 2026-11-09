@@ -14,6 +14,7 @@ mod fold;
 pub mod fuzz;
 
 mod gifplay;
+mod git;
 mod graphics;
 mod greet;
 mod hints;

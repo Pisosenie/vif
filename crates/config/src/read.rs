@@ -47,7 +47,7 @@ const FITS: [(&str, Fit); 5] = [
     ("tile", Fit::Tile),
 ];
 const TOP: [&str; 2] = ["theme", "rules"];
-const RULE: [&str; 6] = ["host", "dir", "theme", "accent", "background", "label"];
+const RULE: [&str; 7] = ["host", "dir", "branch", "theme", "accent", "background", "label"];
 const THEME_TOP: [&str; 3] = ["name", "author", "extends"];
 const TABS: [&str; 6] = ["position", "style", "show", "title", "detail", "plus"];
 const PANES: [&str; 2] = ["divider", "dim"];
@@ -739,6 +739,7 @@ impl Reader<'_> {
             let mut rule = crate::Rule {
                 host: None,
                 dir: None,
+                branch: None,
                 theme: None,
                 accent: None,
                 background: None,
@@ -748,6 +749,7 @@ impl Reader<'_> {
                 match k.get_ref().as_ref() {
                     "host" => rule.host = self.string(k, v).map(str::to_owned),
                     "dir" => rule.dir = self.string(k, v).map(str::to_owned),
+                    "branch" => rule.branch = self.string(k, v).map(str::to_owned),
                     "label" => rule.label = self.string(k, v).map(str::to_owned),
                     "accent" => rule.accent = self.color(k, v),
                     "background" => rule.background = self.color(k, v),
@@ -771,9 +773,12 @@ impl Reader<'_> {
                     _ => self.unknown(k, "rule setting", &RULE),
                 }
             }
-            if rule.host.is_none() && rule.dir.is_none() {
-                let d =
-                    Diagnostic::new(self.line(item.span()), "a rule needs a host or a dir to match").at(item.span());
+            if rule.host.is_none() && rule.dir.is_none() && rule.branch.is_none() {
+                let d = Diagnostic::new(
+                    self.line(item.span()),
+                    "a rule needs a host, a dir or a branch to match",
+                )
+                .at(item.span());
                 self.diagnostics.push(d);
                 continue;
             }

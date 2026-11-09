@@ -2,6 +2,17 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
+## Unreleased
+
+### Added
+
+- Tabs say the git branch of their folder, quieter after it, read from the repository without running git; `{branch}` puts it in the title, and `[[rules]]` take a `branch` pattern, like `release/*`, to give a branch its own look.
+
+### Fixed
+
+- A session that comes back keeps when each command ran and how long it took; its badges said 0.00s and the time it came back.
+- Over plain ssh, a network change cut the first connection too, not only those after it.
+
 ## 0.1.6 — 2026-11-09
 
 ### Added

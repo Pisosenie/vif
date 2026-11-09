@@ -136,13 +136,13 @@ Run `vif niri` again after changing the height. To open vif where niri opens a t
 - Text through swash: ligatures, variable fonts, color emoji, fallback to the system's fonts per Unicode block. Box drawing, block elements, braille and powerline symbols are drawn to fit the cell, so lines join with no gaps. Geist Mono is built in.
 - True color, every underline style with its own color (undercurl included), OSC 8 links, OSC 52 clipboard, synchronized output (mode 2026), bracketed paste, focus events, mouse reporting, the kitty keyboard protocol, and kitty graphics: PNG and raw pixels, inline, chunked, from a file, zlib or not. An image takes up cells like text, so it scrolls and clears with them.
 - Shortcuts work in any keyboard layout: ⌘C and ctrl+w mean the Latin key even with Russian on.
-- Tabs in the title bar and splits in any direction, each opening in the folder of the pane you are in. Drag a divider or move it with keys; zoom one pane to the whole tab and back, like tmux's `prefix z`. Each tab says its folder or host and, quieter after it, what runs there.
+- Tabs in the title bar and splits in any direction, each opening in the folder of the pane you are in. Drag a divider or move it with keys; zoom one pane to the whole tab and back, like tmux's `prefix z`. Each tab says its folder or host and, quieter after it, what runs there and the git branch it's on.
 - In block mode `c` copies the output, `C` the command, `r` runs it again, `f` folds it, `p` opens it in a pager, `n` notifies when a running one ends, `/` searches. A command that runs longer than `notify_after` and ends while you look elsewhere sends a notification; on Linux it has Show block, which brings the command up picked.
 - A program that paints its own background, like vim or htop, paints it to the window's edges.
 - On Linux the clipboard goes through the window's own Wayland connection, with the primary selection.
 - Under [Apolline](https://github.com/Pisosenie/apolline) the cursor, selection and accent follow its accent color as it changes.
 - A scrollbar while you look back, marked where each prompt is, red where a command failed and in the accent where a search matched.
-- Rules by host and folder: a pane `ssh`'d into a matching host, or sitting in a matching folder, takes the rule's theme and a label, so production never looks like your laptop. The host needs nothing installed.
+- Rules by host, folder and git branch: a pane `ssh`'d into a matching host, sitting in a matching folder or on a matching branch, takes the rule's theme and a label, so production never looks like your laptop and `release/*` never looks like `main`. The host needs nothing installed.
 - A command palette, ⇧⌘P: every action with its keys, every theme and every settings page.
 - `vif set window.opacity 0.9` changes one setting from the shell, keeps your comments, and says when a key is misspelled.
 - Checked inside it: tmux with splits, vim, Neovim (its spell check draws as undercurl), htop and Midnight Commander, with their colors and box lines whole.
@@ -241,7 +241,7 @@ radius = 14                # corners of tabs, panels and hint labels; 0 for squa
 position = "bottom"        # "top"
 style = "powerline"        # "pills", "underline", "plain"
 show = "always"            # "many" hides the bar with one tab, "never"
-title = "{index} {dir}"    # {index}, {title}, {cwd}, {dir}
+title = "{index} {dir}"    # {index}, {title}, {cwd}, {dir}, {branch}
 
 [panes]
 divider = "gap"            # "line"
@@ -272,6 +272,10 @@ label = "PROD"
 dir = "~/work/infra*"    # this folder and everything inside it
 accent = "#f2b35c"
 label = "INFRA"
+
+[[rules]]
+branch = "release/*"     # the git branch of the pane's folder
+label = "RELEASE"
 ```
 
 The first rule that fits a pane wins; `theme`, `accent`, `background` and `label` are each optional.
@@ -346,7 +350,7 @@ archive_days = 30          # keep each command and its output this long, 0 keeps
 position = "top"
 style = "pills"
 show = "many"
-title = "{dir}"            # also {index}, {title}, {cwd}; {dir} is the host over ssh
+title = "{dir}"            # also {index}, {title}, {cwd}, {branch}; {dir} is the host over ssh
 detail = true              # what runs there, or the folder, after the title
 plus = true
 

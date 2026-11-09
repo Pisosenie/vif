@@ -907,7 +907,7 @@ impl Win {
     fn follows_places(&self) -> bool {
         let tabs = &self.config.tabs;
         let shown = bar_shown(&self.config, self.tabs.len());
-        let title = tabs.title.contains("{cwd}") || tabs.title.contains("{dir}");
+        let title = ["{cwd}", "{dir}", "{branch}"].iter().any(|p| tabs.title.contains(p));
         !self.config.rules.is_empty() || (shown && (tabs.detail || title))
     }
 

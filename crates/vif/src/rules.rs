@@ -1,5 +1,5 @@
-//! Rules: a pane ssh'd into a matching host, or sitting in a matching folder, takes the rule's
-//! look, so production never looks like your laptop.
+//! Rules: a pane ssh'd into a matching host, sitting in a matching folder or on a matching git
+//! branch, takes the rule's look, so production never looks like your laptop.
 
 use std::path::{Path, PathBuf};
 
@@ -12,13 +12,18 @@ pub struct Place {
     pub host: Option<String>,
     /// What runs in front when it isn't the shell, as typed.
     pub running: Option<String>,
+    /// The git branch of the folder, when it's in a repository here.
+    pub branch: Option<String>,
 }
 
 impl Place {
     pub fn read(cwd: Option<PathBuf>, front: Option<Vec<String>>) -> Self {
+        let host = front.as_deref().and_then(ssh_host);
         Self {
+            // Over ssh the folder is this machine's, and its branch not the one in front.
+            branch: cwd.as_deref().filter(|_| host.is_none()).and_then(crate::git::branch),
             cwd,
-            host: front.as_deref().and_then(ssh_host),
+            host,
             running: front.filter(|argv| !crate::process::is_shell(argv)).map(|argv| {
                 let name = argv[0].rsplit('/').next().unwrap_or(&argv[0]).to_owned();
                 std::iter::once(name)
@@ -41,7 +46,11 @@ pub fn pick(rules: &[Rule], place: &Place) -> Option<usize> {
             .dir
             .as_deref()
             .is_none_or(|pattern| place.cwd.as_deref().is_some_and(|cwd| inside(pattern, cwd)));
-        host && dir
+        let branch = rule
+            .branch
+            .as_deref()
+            .is_none_or(|pattern| place.branch.as_deref().is_some_and(|branch| glob(pattern, branch)));
+        host && dir && branch
     })
 }
 
@@ -157,6 +166,7 @@ mod tests {
         let rule = |host: Option<&str>, dir: Option<&str>| Rule {
             host: host.map(str::to_owned),
             dir: dir.map(str::to_owned),
+            branch: None,
             theme: None,
             accent: None,
             background: None,
@@ -175,5 +185,16 @@ mod tests {
         };
         assert_eq!(pick(&rules, &local), Some(1));
         assert_eq!(pick(&rules, &Place::default()), None);
+
+        let release = Rule {
+            branch: Some("release/*".to_owned()),
+            ..rule(None, None)
+        };
+        let on = |branch: &str| Place {
+            branch: Some(branch.to_owned()),
+            ..Place::default()
+        };
+        assert_eq!(pick(std::slice::from_ref(&release), &on("release/1.2")), Some(0));
+        assert_eq!(pick(std::slice::from_ref(&release), &on("main")), None);
     }
 }
