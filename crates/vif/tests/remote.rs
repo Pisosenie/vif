@@ -94,6 +94,22 @@ fn until(child: &mut Child, text: &str) -> String {
     String::from_utf8_lossy(&got).into_owned()
 }
 
+/// Reads until nothing more has come for a moment: whatever was coming, a prompt say, is here.
+fn quiet(child: &mut Child) {
+    use std::os::fd::AsRawFd;
+    let fd = child.stdout.as_ref().unwrap().as_raw_fd();
+    // SAFETY: sets a flag on a pipe this test owns.
+    unsafe { libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK) };
+    let mut buf = [0u8; 4096];
+    let mut last = Instant::now();
+    while last.elapsed() < Duration::from_millis(500) {
+        match child.stdout.as_mut().unwrap().read(&mut buf) {
+            Ok(n) if n > 0 => last = Instant::now(),
+            _ => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
 fn wait(child: &mut Child) -> Option<i32> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -261,10 +277,8 @@ fn on_a_slow_link_typing_shows_before_its_echo_once_guesses_come_true() {
     let mut keys = ssh.stdin.take().unwrap();
     keys.write_all(b"echo ready-$((2+3))\n").unwrap();
     // The prompt comes after the output, and a guess goes where the cursor is.
-    let ready = until(&mut ssh, "ready-5");
-    if !ready.rsplit("ready-5").next().is_some_and(|after| after.contains("$ ")) {
-        until(&mut ssh, "$ ");
-    }
+    until(&mut ssh, "ready-5");
+    quiet(&mut ssh);
     // The first guess in a line waits for its echo to be trusted; the next one shows at once.
     keys.write_all(b"e").unwrap();
     until(&mut ssh, "e");
