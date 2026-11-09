@@ -27,8 +27,9 @@ const NEVER_CAME: Duration = Duration::from_secs(60);
 const HEARTBEAT: Duration = Duration::from_secs(3);
 /// Output a client may fall behind by before it gets a fresh picture of the screen instead.
 const MOST_BEHIND: usize = 256 * 1024;
-/// How long the output played back on joining a session keeps coming before it's painted.
-const SETTLE: Duration = Duration::from_millis(100);
+/// How long to wait for the end of the painting a session starts with, from a host too old to
+/// mark where it ends.
+const SETTLE: Duration = Duration::from_secs(1);
 /// How long an ended session keeps telling its client so.
 const LINGER: Duration = Duration::from_secs(5);
 /// Lines a screen here keeps after they scroll off.
@@ -160,6 +161,8 @@ struct Agent {
     screen: Screen,
     size: [u16; 4],
     joined: Option<Joined>,
+    /// The session host's painting, until its end is marked.
+    before: Vec<u8>,
     /// Lines scrolled off when the client last had everything.
     seen: usize,
     ended: Option<(End, Instant)>,
@@ -187,6 +190,7 @@ impl Agent {
             screen: Screen::new(80, 24, HISTORY),
             size: [80, 24, 0, 0],
             joined: None,
+            before: Vec::new(),
             seen: 0,
             ended: None,
             tell,
@@ -285,10 +289,17 @@ impl Agent {
                     self.seen = self.screen.history();
                 }
             }
-            Heard::Output(bytes) => {
+            Heard::Output(bytes) if self.painted() => {
                 self.screen.feed(&bytes);
-                if self.painted() {
-                    self.out.push(&bytes);
+                self.out.push(&bytes);
+            }
+            Heard::Output(bytes) => {
+                self.before.extend_from_slice(&bytes);
+                if let Some(at) = memchr::memmem::find(&self.before, session::PAINTED) {
+                    let after = self.before.split_off(at + session::PAINTED.len());
+                    self.paint_first(now);
+                    self.screen.feed(&after);
+                    self.out.push(&after);
                 }
             }
             Heard::Closed => {
@@ -330,8 +341,7 @@ impl Agent {
     fn paint_when_due(&mut self, now: Instant) {
         let settled = self.joined.as_ref().is_some_and(|j| now.duration_since(j.at) >= SETTLE);
         if !self.painted() && settled {
-            self.out.restart(self.screen.paint(MOST_HISTORY), now);
-            self.seen = self.screen.history();
+            self.paint_first(now);
         } else if self.painted() && self.out.backlog() > MOST_BEHIND {
             let history = self.screen.history();
             let scrolled = if history >= HISTORY {
@@ -342,6 +352,14 @@ impl Agent {
             self.out.restart(self.screen.paint(scrolled), now);
             self.seen = history;
         }
+    }
+
+    /// The host's painting taken in, and the client's first picture made of it.
+    fn paint_first(&mut self, now: Instant) {
+        let before = std::mem::take(&mut self.before);
+        self.screen.feed(&before);
+        self.out.restart(self.screen.paint(MOST_HISTORY), now);
+        self.seen = self.screen.history();
     }
 
     fn send(&mut self, now: Instant) {

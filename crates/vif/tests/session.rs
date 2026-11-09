@@ -184,7 +184,9 @@ fn coming_back_paints_the_screen_as_it_is_rather_than_the_bytes_again() {
     ctl.write_all(b"resize 40 12 8 16\n").unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let mut again = host.attach();
-    let painted = until(&mut again, "full-screen");
+    let painted = until(&mut again, "\x1b]6907;painted\x07");
+    // The painting is all there before the mark that ends it.
+    let painted = painted.split("\x1b]6907;painted").next().unwrap().to_owned();
     // The shell's screen first, with the command that started the program, then the program's.
     let program = painted.rfind("\x1b[?1049h").expect("the alternate screen");
     assert!(painted.find("printf").is_some_and(|at| at < program), "{painted:?}");

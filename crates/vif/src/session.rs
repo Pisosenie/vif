@@ -23,6 +23,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::screen::Screen;
 
+/// Written after the painting a client starts with, so it knows where the painting ends and the
+/// shell's own output begins; an OSC no terminal acts on.
+pub const PAINTED: &[u8] = b"\x1b]6907;painted\x07";
+
 /// Lines a host's screen keeps after they scroll off, to paint above it: at 120 columns about
 /// as much memory as the two megabytes of output hosts used to keep.
 const HISTORY: usize = crate::screen::MOST_HISTORY;
@@ -471,7 +475,10 @@ fn serve(args: &[String]) -> io::Result<i32> {
             };
             let mut s = shared.lock().expect("state");
             let mut stream = stream;
-            if stream.write_all(&s.screen.paint(HISTORY)).is_err() {
+            let painted = stream
+                .write_all(&s.screen.paint(HISTORY))
+                .and_then(|()| stream.write_all(PAINTED));
+            if painted.is_err() {
                 continue;
             }
             if let Some((_, old)) = s.client.take() {
