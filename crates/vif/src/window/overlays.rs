@@ -178,6 +178,7 @@ impl Win {
             ("letter", "open"),
             (if mac { "⇧" } else { "Shift" }, "copy"),
             (if mac { "⌥" } else { "Alt" }, "paste into prompt"),
+            (if mac { "⌃" } else { "Ctrl" }, "on the web"),
             ("Esc", "back"),
         ]);
         let note = if total == 0 {

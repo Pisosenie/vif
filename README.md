@@ -30,7 +30,7 @@ Off until you turn it on, and then local by default: vif asks [Ollama](https://o
 
 ![Hints: links, paths, commit hashes and an IP address on screen, each with a letter floating over it, and a bar that says what the next letter does](docs/hints.png)
 
-⇧⌘H gives every link, path with a line number, commit hash and IP address on screen a letter. The letter opens it where it belongs: a link in the browser, `pane.rs:212` in your `$EDITOR` at that line, a commit as `git show`, a folder as a shell there. Shift copies it, Alt pastes it at the prompt. ⌘-click (ctrl-click on Linux) does the same for any path.
+⇧⌘H gives every link, path with a line number, commit hash and IP address on screen a letter. The letter opens it where it belongs: a link in the browser, `pane.rs:212` in your `$EDITOR` at that line, a commit as `git show`, a folder as a shell there. Shift copies it, Alt pastes it at the prompt, Ctrl opens a commit, or a file at its line, on the repository's page on GitHub, GitLab or Codeberg. ⌘-click (ctrl-click on Linux) does the same for any path.
 
 ## Search everything
 

@@ -128,11 +128,29 @@ impl Win {
                 self.clipboard.set(target.text);
             } else if state.alt_key() {
                 self.paste(target.text);
+            } else if state.control_key() && matches!(target.kind, Kind::Hash | Kind::Path { .. }) {
+                self.open_on_web(&target, cwd);
             } else {
                 self.open_target(target, cwd, shared);
             }
         }
         self.window.request_redraw();
+    }
+
+    /// Opens a commit, or a file at its line, on the repository's page on the web.
+    fn open_on_web(&mut self, target: &Target, cwd: Option<PathBuf>) {
+        use crate::git::{Page, page};
+        let url = match &target.kind {
+            Kind::Hash => cwd.as_deref().and_then(|dir| page(dir, Page::Commit(&target.text))),
+            Kind::Path { path, line } => path.parent().and_then(|dir| page(dir, Page::File(path, *line))),
+            _ => None,
+        };
+        match url {
+            Some(url) => {
+                let _ = open::that_detached(url);
+            }
+            None => self.flash("No page on the web for that: it isn't in a repository with an origin"),
+        }
     }
 
     /// Opens what a hint points at: links in the browser, files in the editor, folders and
