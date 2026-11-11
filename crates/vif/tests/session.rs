@@ -41,10 +41,9 @@ impl Host {
     }
 
     fn control(&self) -> (UnixStream, String) {
-        let ctl = UnixStream::connect(self.socket("ctl")).unwrap();
+        let mut ctl = UnixStream::connect(self.socket("ctl")).unwrap();
         ctl.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let mut hello = String::new();
-        BufReader::new(ctl.try_clone().unwrap()).read_line(&mut hello).unwrap();
+        let hello = said(&mut ctl);
         (ctl, hello)
     }
 
@@ -105,6 +104,13 @@ fn closed(stream: &mut UnixStream) -> bool {
     false
 }
 
+/// The next line a control connection says.
+fn said(ctl: &mut UnixStream) -> String {
+    let mut line = String::new();
+    BufReader::new(ctl).read_line(&mut line).unwrap();
+    line
+}
+
 fn peek(ctl: &mut UnixStream, bytes: usize) -> Vec<u8> {
     ctl.write_all(format!("peek {bytes}\n").as_bytes()).unwrap();
     let mut reader = BufReader::new(ctl);
@@ -146,9 +152,7 @@ fn hello_attach_detach_and_exit() {
 
     let (mut ctl, _) = host.control();
     second.write_all(b"exit 3\n").unwrap();
-    let mut said = String::new();
-    BufReader::new(&mut ctl).read_line(&mut said).unwrap();
-    assert_eq!(said.trim(), "exit 3");
+    assert_eq!(said(&mut ctl).trim(), "exit 3");
 }
 
 #[test]
@@ -210,6 +214,72 @@ fn stopping_the_host_keeps_what_it_printed() {
         kept.contains("API_TOKEN=••••") && !kept.contains("abc123secret"),
         "{kept}"
     );
+}
+
+#[test]
+fn what_scrolled_off_comes_back_above_the_screen() {
+    let host = Host::start("history");
+    let mut data = host.attach();
+    data.write_all(b"i=0; while [ $i -lt 60 ]; do echo row-$i; i=$((i+1)); done; echo last-$((6*7))\n")
+        .unwrap();
+    until(&mut data, "last-42");
+    drop(data);
+    let mut again = host.attach();
+    let painted = until(&mut again, "\x1b]6907;painted\x07");
+    // row-0 left a 24-line screen long ago; it comes back first, the rest in order after it.
+    let first = painted.find("row-0\x1b").expect("the first line");
+    let later = painted.find("row-59").expect("the last line");
+    assert!(first < later, "{painted:?}");
+}
+
+#[test]
+fn a_new_size_reaches_the_shell() {
+    let host = Host::start("size");
+    let (mut ctl, _) = host.control();
+    let mut data = host.attach();
+    ctl.write_all(b"resize 100 30 8 16\n").unwrap();
+    // The shell waits for the size to come rather than the test guessing how long it takes.
+    data.write_all(b"until [ \"$(stty size)\" = '30 100' ]; do sleep 0.05; done; echo size-$(stty size | tr ' ' x)\n")
+        .unwrap();
+    until(&mut data, "size-30x100");
+}
+
+#[test]
+fn kill_ends_the_shell_and_every_control_hears_it() {
+    let host = Host::start("kill");
+    let mut data = host.attach();
+    data.write_all(b"echo up-$((1+1))\n").unwrap();
+    until(&mut data, "up-2");
+    let (mut watcher, _) = host.control();
+    let (mut killer, _) = host.control();
+    // Nonsense on a control connection is ignored, and the connection goes on working.
+    killer.write_all(b"frobnicate 7\n").unwrap();
+    killer.write_all(b"kill\n").unwrap();
+    let line = said(&mut watcher);
+    assert!(line.starts_with("exit "), "{line:?}");
+    assert!(closed(&mut data));
+    wait(|| !host.socket("ctl").exists());
+}
+
+#[test]
+fn a_taken_session_leaves_the_old_control_quiet() {
+    let host = Host::start("taken");
+    let (mut old_ctl, _) = host.control();
+    let mut first = host.attach();
+    first.write_all(b"echo one-$((2+3))\n").unwrap();
+    until(&mut first, "one-5");
+    let mut second = host.attach();
+    until(&mut second, "one-5");
+    assert!(closed(&mut first));
+    // Nothing on the control connection: the shell goes on, someone else has it.
+    old_ctl.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    let quiet = old_ctl
+        .read(&mut [0u8; 64])
+        .is_err_and(|e| matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut));
+    assert!(quiet, "the old control heard something");
+    second.write_all(b"exit 4\n").unwrap();
+    old_ctl.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    assert_eq!(said(&mut old_ctl).trim(), "exit 4");
 }
 
 unsafe extern "C" {
