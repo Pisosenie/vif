@@ -1,6 +1,6 @@
 # Maintainer: Danil Zorin <45851636+Pisosenie@users.noreply.github.com>
 pkgname=vif-bin
-pkgver=0.1.8
+pkgver=0.1.9
 pkgrel=1
 pkgdesc='A fast GPU terminal with themes, command blocks and shells that outlive the window (prebuilt)'
 arch=('x86_64' 'aarch64')
@@ -22,8 +22,8 @@ conflicts=('vif')
 options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/vif-$pkgver-x86_64-linux.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/vif-$pkgver-aarch64-linux.tar.gz")
-sha256sums_x86_64=('8116250c332e86cd86192e1b85e86c499b6639a1e2477ba5d5150b10ccef03ac')
-sha256sums_aarch64=('1b26c9e6ffcdcb0ad68a69e01f8d9b6c699882ec46df253d609b6cfbc457c9f8')
+sha256sums_x86_64=('67e1c121677e4ed09e9933113d19149b1857cd5e71f835e886adb1a8d8b5e5a1')
+sha256sums_aarch64=('c52364232b6ac3f7d2fde2bad7a291ecaa9d90be028f716b100ca8e4e54da9d3')
 
 package() {
   cd "vif-$pkgver-$CARCH-linux"
