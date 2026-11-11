@@ -17,6 +17,7 @@ mod gifplay;
 mod git;
 mod graphics;
 mod greet;
+mod held;
 mod hints;
 mod input;
 mod layout;

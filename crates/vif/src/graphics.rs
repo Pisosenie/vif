@@ -7,6 +7,7 @@
 //!
 //! The same filter takes shell integration marks (OSC 133) out; see [`crate::marks`].
 
+use crate::held::Held;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -291,7 +292,7 @@ impl Filter {
                         self.images.remove(&id);
                     }
                     "a" | "A" => {
-                        self.shared.placements.lock().expect("placements").clear();
+                        self.shared.placements.held().clear();
                         self.order.clear();
                     }
                     _ => {}
@@ -412,7 +413,7 @@ impl Filter {
 
     /// Keeps placements under a memory budget, dropping the oldest first.
     fn remember(&mut self, id: u32, placement: Placement) {
-        let mut placements = self.shared.placements.lock().expect("placements");
+        let mut placements = self.shared.placements.held();
         placements.insert(id, placement);
         self.order.push_back(id);
         let mut total: usize = placements.values().map(|p| p.image.rgba.len()).sum();
@@ -575,6 +576,8 @@ impl EventedReadWrite for GraphicsPty {
     type Reader = Filter;
     type Writer = File;
 
+    /// # Safety
+    /// As the trait has it: what's registered must outlive its registration.
     unsafe fn register(
         &mut self,
         poll: &Arc<polling::Poller>,

@@ -5,6 +5,7 @@
 //! reflow. A prompt or output tag waits for the next printed character: a cell written after
 //! the tag landed would drop it.
 
+use crate::held::Held;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
@@ -86,22 +87,22 @@ struct Inner {
 
 impl Blocks {
     pub fn get(&self, id: u32) -> Option<Block> {
-        self.inner.lock().expect("blocks").map.get(&id).copied()
+        self.inner.held().map.get(&id).copied()
     }
 
     /// The newest command that started.
     pub fn last(&self) -> Option<u32> {
-        self.inner.lock().expect("blocks").last
+        self.inner.held().last
     }
 
     /// Blocks that finished since the last call.
     pub fn take_done(&self) -> Vec<u32> {
-        std::mem::take(&mut self.inner.lock().expect("blocks").done)
+        std::mem::take(&mut self.inner.held().done)
     }
 
     /// A command starting now, or at `at` when a painting says it started earlier.
     fn start(&self, id: u32, at: Option<SystemTime>) {
-        let mut inner = self.inner.lock().expect("blocks");
+        let mut inner = self.inner.held();
         inner.last = Some(id);
         let now = SystemTime::now();
         let at = at.unwrap_or(now);
@@ -122,7 +123,7 @@ impl Blocks {
 
     /// A command ending now, having taken `took` when a painting says so.
     fn end(&self, id: u32, exit: i32, took: Option<Duration>) {
-        let mut inner = self.inner.lock().expect("blocks");
+        let mut inner = self.inner.held();
         if let Some(block) = inner.map.get_mut(&id)
             && block.ended.is_none()
         {

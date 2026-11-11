@@ -4,6 +4,7 @@
 //! hosts running; the next vif attaches to them and gets that screen painted, with what scrolled
 //! off above it, the way tmux brings a session back, rather than raw output played again.
 
+use crate::held::Held;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -457,7 +458,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     // before this, keeps SIGTERM as usual.
     let (kept, keep_id) = (state.clone(), id.clone());
     crate::tty::on_signal(libc::SIGTERM, move || {
-        let painted = kept.lock().expect("state").screen.paint(HISTORY);
+        let painted = kept.held().screen.paint(HISTORY);
         keep_output(&keep_id, &painted);
         // SAFETY: kill only sends a signal, to the shell this host started.
         unsafe { libc::kill(pid as i32, libc::SIGHUP) };
@@ -473,7 +474,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
             let Ok(reader) = stream.try_clone() else {
                 continue;
             };
-            let mut s = shared.lock().expect("state");
+            let mut s = shared.held();
             let mut stream = stream;
             let painted = stream
                 .write_all(&s.screen.paint(HISTORY))
@@ -497,7 +498,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                         break;
                     }
                 }
-                let mut s = shared.lock().expect("state");
+                let mut s = shared.held();
                 if s.client.as_ref().is_some_and(|(t, _)| *t == turn) {
                     s.client = None;
                     s.since = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -510,7 +511,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     std::thread::spawn(move || {
         for stream in ctl.incoming().flatten() {
             let (attached, since) = {
-                let s = shared.lock().expect("state");
+                let s = shared.held();
                 (u8::from(s.client.is_some()), s.since)
             };
             let mut stream = stream;
@@ -519,7 +520,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                 continue;
             }
             let number = {
-                let mut s = shared.lock().expect("state");
+                let mut s = shared.held();
                 s.connections += 1;
                 let number = s.connections;
                 if let Ok(copy) = stream.try_clone() {
@@ -540,8 +541,8 @@ fn serve(args: &[String]) -> io::Result<i32> {
                     if line.starts_with("resize ")
                         && let [cols, lines, cw, ch] = words[..]
                     {
-                        ring.lock().expect("state").screen.resize(cols, lines);
-                        sizes.lock().expect("pty").on_resize(WindowSize {
+                        ring.held().screen.resize(cols, lines);
+                        sizes.held().on_resize(WindowSize {
                             num_lines: lines,
                             num_cols: cols,
                             cell_width: cw,
@@ -553,7 +554,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                     } else if line.starts_with("peek ") {
                         // What's on the screen, however many bytes were asked for: a painting
                         // cut short would leave a sequence half done.
-                        let tail = ring.lock().expect("state").screen.paint(0);
+                        let tail = ring.held().screen.paint(0);
                         let head = format!("peek {}\n", tail.len());
                         if reply
                             .write_all(head.as_bytes())
@@ -565,7 +566,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
                     }
                 }
                 // A window asks and goes many times; each one gone lets go of its socket.
-                ring.lock().expect("state").controls.retain(|(n, _)| *n != number);
+                ring.held().controls.retain(|(n, _)| *n != number);
             });
         }
     });
@@ -576,7 +577,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
-        let mut s = state.lock().expect("state");
+        let mut s = state.held();
         s.screen.feed(&buf[..n]);
         if let Some((_, client)) = s.client.as_mut()
             && client.write_all(&buf[..n]).is_err()
@@ -595,7 +596,7 @@ fn serve(args: &[String]) -> io::Result<i32> {
     let _ = fs::remove_file(&ctl_path);
     let _ = fs::remove_file(&data_path);
     let _ = fs::remove_file(dir().join(format!("{id}.name")));
-    let mut s = state.lock().expect("state");
+    let mut s = state.held();
     for (_, control) in &mut s.controls {
         let _ = control.write_all(format!("exit {code}\n").as_bytes());
     }

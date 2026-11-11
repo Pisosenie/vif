@@ -1,6 +1,7 @@
 //! Drawing a pane: its rows built into quads and glyphs, only those that changed, with the badges,
 //! images, selection and search matches over them.
 
+use crate::held::Held;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{self, Term, TermDamage};
@@ -33,7 +34,7 @@ impl Pane {
         }
         let m = r.metrics();
         let a = self.area;
-        let placements = self.graphics.placements.lock().expect("placements");
+        let placements = self.graphics.placements.held();
         for (id, mark) in anchors {
             let Some(p) = placements.get(&id) else {
                 continue;
