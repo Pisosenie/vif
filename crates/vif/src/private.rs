@@ -10,10 +10,25 @@ use std::path::{Path, PathBuf};
 /// XDG_RUNTIME_DIR, which the login made for this user alone, or a folder of ours in the
 /// temporary folder, which everyone shares; true for the second.
 fn base() -> (PathBuf, bool) {
-    match std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        Some(dir) => (PathBuf::from(dir), false),
+    match std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| closed(dir))
+    {
+        Some(dir) => (dir, false),
         None => (std::env::temp_dir().join(format!("vif-{}", uid())), true),
     }
+}
+
+/// Whether `dir` is this user's own real folder that nobody else can write into; an
+/// XDG_RUNTIME_DIR that isn't is no safer than the temporary folder, so it isn't trusted.
+/// Others may read it: what vif keeps goes in folders of its own inside, made 0700.
+fn closed(dir: &Path) -> bool {
+    fs::symlink_metadata(dir).is_ok_and(|m| own(&m) && m.mode() & 0o022 == 0)
+}
+
+/// A real folder, not a link to one, that this user owns.
+fn own(meta: &fs::Metadata) -> bool {
+    meta.is_dir() && meta.uid() == uid()
 }
 
 fn uid() -> u32 {
@@ -50,7 +65,7 @@ fn make(dir: &Path) -> io::Result<()> {
         _ => {}
     }
     let meta = fs::symlink_metadata(dir)?;
-    if !meta.is_dir() || meta.uid() != uid() {
+    if !own(&meta) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("{} is not this user's own folder, so vif won't use it", dir.display()),
@@ -82,6 +97,24 @@ mod tests {
         let link = root.join("link");
         std::os::unix::fs::symlink(&open, &link).unwrap();
         assert_eq!(make(&link).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_runtime_folder_others_can_write_into_is_not_used() {
+        let root = std::env::temp_dir().join(format!("vif-runtime-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let inner = root.join("inner");
+        fs::create_dir(&inner).unwrap();
+        fs::set_permissions(&inner, Permissions::from_mode(0o755)).unwrap();
+        assert!(closed(&inner));
+        fs::set_permissions(&inner, Permissions::from_mode(0o777)).unwrap();
+        assert!(!closed(&inner), "others can write into it");
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&inner, &link).unwrap();
+        assert!(!closed(&link), "a link");
+        assert!(!closed(Path::new("")));
         fs::remove_dir_all(&root).unwrap();
     }
 }
