@@ -40,7 +40,7 @@ Off until you turn it on, and then local by default: vif asks [Ollama](https://o
 
 ⇧⌘F searches what this pane shows, what every open pane shows, or all of that and every command kept on this machine with what it printed, for 30 days by default. Words or a regular expression (⌥R), with case or without (⌥C); Enter goes to the line where it is, `vif history WORDS` searches from the shell.
 
-What is kept stays on this machine in files only you can read (0600, in a 0700 folder). Tokens, keys and passwords are taken out before anything is written: `NAME=value` where the name says it's a secret, GitHub, GitLab, OpenAI, Slack, AWS and Google tokens, bearer headers, JWTs and private keys. A command typed with a space in front isn't kept at all, and `archive_days = 0` keeps nothing.
+What is kept stays on this machine in files only you can read (0600, in a 0700 folder). Tokens, keys and passwords are taken out before anything is written: `NAME=value` where the name says it's a secret, passwords in URLs like `postgres://app:pass@db`, GitHub, GitLab, OpenAI, Slack, AWS and Google tokens, bearer headers, JWTs and private keys. A command typed with a space in front isn't kept at all, and `archive_days = 0` keeps nothing.
 
 ## Shells that outlive their window
 
@@ -88,7 +88,7 @@ git clone https://github.com/Pisosenie/vif
 cd vif/packaging/arch/vif-bin && makepkg -si
 ```
 
-All three install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry and the icon. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs.
+All three install `vif`, `vif-settings`, the `xterm-vif` terminfo for every program, a desktop entry, the icon and `man vif`. vif links only glibc and libgcc; Wayland, xkbcommon, Vulkan and EGL are opened when it runs.
 
 **macOS 13 or later**, Apple silicon or Intel, with Homebrew:
 
@@ -108,7 +108,7 @@ xattr -dr com.apple.quarantine /Applications/vif.app
 sudo apt install ./vif_0.1.9_amd64.deb
 ```
 
-**Other Linux**, x86_64 or aarch64: `vif-<version>-<arch>-linux.tar.gz` from [Releases](https://github.com/Pisosenie/vif/releases), built on Ubuntu 22.04, so it runs with glibc 2.35 or newer. Unpack it and run `./install.sh`, which puts `vif` and `vif-settings` in `~/.local/bin` with a desktop entry and the icon (`sudo ./install.sh /usr/local` for everyone). It needs Wayland or X11, and Vulkan or OpenGL.
+**Other Linux**, x86_64 or aarch64: `vif-<version>-<arch>-linux.tar.gz` from [Releases](https://github.com/Pisosenie/vif/releases), built on Ubuntu 22.04, so it runs with glibc 2.35 or newer. Unpack it and run `./install.sh`, which puts `vif` and `vif-settings` in `~/.local/bin` with a desktop entry, the icon and the man page (`sudo ./install.sh /usr/local` for everyone). It needs Wayland or X11, and Vulkan or OpenGL.
 
 **From source**, with a current stable Rust:
 
