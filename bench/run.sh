@@ -17,8 +17,12 @@ ALACRITTY=${ALACRITTY:-$(command -v alacritty || echo "$HOME/.local/vif-bench/bi
 KITTY=${KITTY:-/Applications/kitty.app/Contents/MacOS/kitty}
 GHOSTTY=${GHOSTTY:-/Applications/Ghostty.app/Contents/MacOS/ghostty}
 mkdir -p "$OUT"
-printf '[font]\nsize = 13\n\n[window]\ncolumns = 100\nlines = 30\n\n[terminal]\nsessions = false\n' > "$OUT/vif.toml"
+printf '[font]\nsize = 13\n\n[window]\ncolumns = 100\nlines = 30\n' > "$OUT/vif.toml"
 export VIF_CONFIG="$OUT/vif.toml"
+# vif runs as it does by default, with a session host under each shell, kept apart from the
+# sessions and windows of the vif in use.
+export XDG_RUNTIME_DIR="$OUT/run" XDG_DATA_HOME="$OUT/data"
+mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 swiftc -O -o "$OUT/probe" "$ROOT/bench/probe.swift" 2>/dev/null
 
 # name, window owner, command (the program to run is appended)
@@ -42,7 +46,15 @@ launch() {
     echo $!
 }
 
-stop() { kill "$1" 2>/dev/null || true; sleep 1; kill -9 "$1" 2>/dev/null || true; }
+# The process, and the session hosts it left behind.
+stop() {
+    kill "$1" 2>/dev/null || true; sleep 1; kill -9 "$1" 2>/dev/null || true
+    hosts | xargs kill 2>/dev/null || true
+}
+
+hosts() { lsof -t +D "$XDG_RUNTIME_DIR" 2>/dev/null | sort -u; }
+
+rss_mb() { echo $(( $(ps -o rss= -p "$1" | awk '{s+=$1} END {print s+0}') / 1024 )); }
 
 startup() {
     for t in vif alacritty kitty ghostty; do
@@ -94,7 +106,10 @@ EOF
 memory() {
     for t in vif alacritty kitty ghostty; do
         pid=$(launch $t /bin/zsh); sleep 4
-        printf '%-10s %s MB\n' "$t" $(( $(ps -o rss= -p "$pid") / 1024 ))
+        helpers=$(hosts | grep -vx "$pid" | paste -sd, -)
+        printf '%-10s %s MB' "$t" "$(rss_mb "$pid")"
+        [ -n "$helpers" ] && printf ' + %s MB session host' "$(rss_mb "$helpers")"
+        echo
         stop "$pid"
     done
 }
