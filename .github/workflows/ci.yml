@@ -20,6 +20,16 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  # The .deb is built here, and /bin/sh is dash.
+  ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace --locked
+
   macos:
     runs-on: macos-latest
     steps:
