@@ -58,6 +58,7 @@ package() {
   tic -x -o "$pkgdir/usr/share/terminfo" assets/xterm-vif.terminfo
   install -Dm644 assets/vif.desktop "$pkgdir/usr/share/applications/vif.desktop"
   install -Dm644 assets/vif.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/vif.svg"
+  install -Dm644 assets/vif.1 "$pkgdir/usr/share/man/man1/vif.1"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"

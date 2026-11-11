@@ -24,6 +24,9 @@ tic -x -o "$pkg/usr/share/terminfo" assets/xterm-vif.terminfo
 install -Dm644 assets/vif.desktop "$pkg/usr/share/applications/vif.desktop"
 install -Dm644 assets/vif.svg "$pkg/usr/share/icons/hicolor/scalable/apps/vif.svg"
 install -Dm644 README.md "$pkg/usr/share/doc/vif/README.md"
+# Debian keeps manual pages compressed.
+install -d "$pkg/usr/share/man/man1"
+gzip -9n < assets/vif.1 > "$pkg/usr/share/man/man1/vif.1.gz"
 {
     echo "vif is under MIT or Apache-2.0, at your choice; Geist Mono, built in, under the OFL."
     for license in LICENSE-MIT LICENSE-APACHE assets/fonts/OFL.txt; do

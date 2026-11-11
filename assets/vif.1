@@ -1,0 +1,97 @@
+.TH VIF 1 2026-11-11 "vif" "User Commands"
+.SH NAME
+vif \- a GPU terminal with command blocks and shells that outlive the window
+.SH SYNOPSIS
+.B vif
+[\fB\-e\fR \fIcommand\fR [\fIargs\fR...]]
+.br
+.B vif
+\fIsubcommand\fR [\fIargs\fR...]
+.SH DESCRIPTION
+.B vif
+is a terminal emulator that draws on the GPU. Every command is a block with its
+exit code and time; shells keep running in a session host when their window
+closes and come back in the next vif; hints pick links, paths and commit hashes
+off the screen; a search covers every pane and the commands kept on this
+machine.
+.PP
+With no arguments vif opens a window, taking back the sessions no window has.
+With
+.B \-e
+it runs \fIcommand\fR in the window instead of the shell.
+.SH SUBCOMMANDS
+.TP
+.B check
+Show problems in vif.toml, with the line and what was probably meant.
+.TP
+.BI set " key value"
+Change one setting, keeping the file's comments: \fBvif set window.opacity
+0.9\fR.
+.TP
+.BR history " [\fIwords\fR...]"
+Commands kept with their output, found by what they were or printed.
+.TP
+.B sessions
+Every shell vif keeps running, and which have no window.
+.TP
+.BI attach " name" | id
+Open a window for one of them.
+.TP
+.B quick
+Show or hide the quick terminal; bind it to a key in the compositor.
+.TP
+.B niri
+Print a fragment for niri's config: the quick terminal's place and key.
+.TP
+.BR settings " [\fIpage\fR]"
+Open the settings window, on a page like \fBfont\fR or \fBkeys\fR.
+.TP
+.BR theme " [\fBuse\fR \fIname\fR | \fBnew\fR \fIname\fR [\fIfrom\fR] | \fBadd\fR \fIfile\fR|\fIurl\fR | \fBcheck\fR [\fIname\fR]]"
+List themes, switch every window to one, start your own, install one (vif's
+own, or colors from kitty, Ghostty, Alacritty, iTerm, base16, Xresources,
+Windows Terminal or pywal), or show a theme's problems.
+.TP
+.BR ssh " [\fB\-\-udp\fR|\fB\-\-no\-udp\fR] \fIhost\fR [\fIname\fR]"
+A shell on \fIhost\fR that outlives the connection; vif has to be installed
+there too. Where UDP gets through, keys and output travel as encrypted
+datagrams on a port from 60000 to 61000, the way mosh does, so the session
+survives sleep and network changes; elsewhere it stays on ssh and reconnects.
+\fIname\fR comes back to the same shell later. ctrl-^ \fB.\fR leaves it
+running.
+.TP
+.BI gif " file" " [\-\-blocks] [\-\-mono] [\-\-width " n "] [\-\-once] [\-\-text]"
+Play a GIF in text where you are.
+.TP
+.BR greet " [\fIfile\fR]"
+Show the greeting from \fB[greeting]\fR, or \fIfile\fR in its picture's place.
+.TP
+.B \-\-version
+Print the version.
+.SH FILES
+.TP
+.I ~/.config/vif/vif.toml
+The configuration; open windows follow it as it is saved.
+.TP
+.I ~/.config/vif/themes/
+Themes of your own.
+.TP
+.I ~/.local/share/vif/archive/
+Commands kept with what they printed, readable by you alone, secrets taken out.
+.TP
+.I $XDG_RUNTIME_DIR/vif\-sessions/
+The session hosts' sockets.
+.SH ENVIRONMENT
+.TP
+.B VIF_CONFIG
+Read this file instead of vif.toml.
+.TP
+.B XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_RUNTIME_DIR
+Where the files above go. XDG_RUNTIME_DIR is used only when it is your own
+folder that nobody else can write into; otherwise vif makes a closed one in the
+temporary folder.
+.SH SEE ALSO
+.BR ssh (1),
+.BR mosh (1),
+.BR tmux (1)
+.PP
+https://github.com/Pisosenie/vif
