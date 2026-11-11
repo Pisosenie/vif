@@ -16,6 +16,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
 
+use crate::held::Held;
 use crate::marks::{self, Blocks, Kind, Scanner};
 
 /// Most lines of what scrolled off that a painting brings back.
@@ -32,9 +33,7 @@ impl EventListener for Title {
             // Answers to a program's questions come from the client's own terminal.
             _ => return,
         };
-        if let Ok(mut held) = self.0.lock() {
-            *held = title;
-        }
+        *self.0.held() = title;
     }
 }
 
@@ -104,6 +103,8 @@ struct Under {
     history: Vec<String>,
     screen: Vec<String>,
     finish: String,
+    /// The last command whose output's start is among these lines.
+    output: Option<u32>,
 }
 
 impl Under {
@@ -197,23 +198,40 @@ impl Screen {
     /// after the last `history` lines that scrolled off, and leave it in the same modes.
     pub fn paint(&self, history: usize) -> Vec<u8> {
         let mut out = String::from("\x1b[0m\x1b[r\x1b[?1049l\x1b[H\x1b[2J");
-        if self.alternate() {
+        let output = if self.alternate() {
             // The ordinary screen first, so it's there again when the program ends.
+            let mut painted = Painted {
+                output: self.under.as_ref().and_then(|u| u.output),
+            };
             if let Some(under) = &self.under {
                 under.write(&mut out, history);
                 out.push_str(&under.finish);
             }
             out.push_str("\x1b[?1049h\x1b[H\x1b[2J");
-            let mut painted = Painted::default();
             for line in 0..self.term.screen_lines() {
                 out.push_str(&goto(0, line));
                 self.row(&mut out, Line(line as i32), Some(&mut painted));
             }
+            painted.output
         } else {
-            self.ordinary(history).write(&mut out, history);
-        }
+            let ordinary = self.ordinary(history);
+            ordinary.write(&mut out, history);
+            ordinary.output
+        };
+        self.still_running(&mut out, output);
         self.finish(&mut out);
         out.into_bytes()
+    }
+
+    /// The start of a command that runs on when no painted cell carries where its output began,
+    /// because it printed nothing yet, or that cell scrolled off or was written over: it goes at
+    /// the end, so the terminal counts the time from when the command really started.
+    fn still_running(&self, out: &mut String, painted: Option<u32>) {
+        if let Some(id) = self.blocks.last().filter(|&id| painted != Some(id))
+            && let Some(block) = self.blocks.get(id).filter(|b| b.ended.is_none())
+        {
+            output(out, &block);
+        }
     }
 
     /// The ordinary screen as it stands, with up to `history` lines that scrolled off.
@@ -233,6 +251,7 @@ impl Screen {
                 self.finish(&mut finish);
                 finish
             },
+            output: painted.output,
         }
     }
 
@@ -301,6 +320,7 @@ impl Screen {
                 // A command that printed nothing has no cell to carry where its output began.
                 if painted.output != Some(id) {
                     output(out, &block);
+                    painted.output = Some(id);
                 }
                 if let Some((took, exit)) = block.ended {
                     let _ = write!(out, "\x1b]133;D;{exit};{}{}\x07", marks::TOOK, took.as_millis());
@@ -330,9 +350,7 @@ impl Screen {
             _ => 2,
         } - u8::from(style.blinking);
         let _ = write!(out, "\x1b[{shape} q");
-        if let Ok(title) = self.title.0.lock()
-            && let Some(title) = title.as_ref()
-        {
+        if let Some(title) = self.title.0.held().as_ref() {
             let clean: String = title.chars().filter(|c| !c.is_control()).collect();
             let _ = write!(out, "\x1b]2;{clean}\x07");
         }
@@ -475,16 +493,28 @@ mod tests {
         assert!(text.contains("\x1b]133;D;1;vif.took="), "{text:?}");
         assert!(text.contains("\x1b]133;C;vif.at="), "{text:?}");
 
-        // A window taking the painting in finds the command that failed, as it ended.
-        let blocks = Arc::new(Blocks::default());
-        let (Ok(input), Ok(reply)) = (std::fs::File::open("/dev/null"), std::fs::File::create("/dev/null")) else {
-            panic!("no /dev/null");
-        };
-        let shared = Arc::new(crate::graphics::Shared::default());
-        let mut filter = crate::graphics::Filter::new(input, reply, shared, blocks.clone());
-        filter.feed(&painted);
+        // A terminal taking the painting in finds the command that failed, as it ended.
+        let blocks = received(&painted);
         let ended = blocks.last().and_then(|id| blocks.get(id)).and_then(|b| b.ended);
         assert_eq!(ended.map(|(_, exit)| exit), Some(1));
+    }
+
+    #[test]
+    fn a_command_still_running_keeps_its_start() {
+        let mut there = Screen::new(30, 6, 100);
+        there.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07sleep 600\r\n\x1b]133;C\x07");
+        let started = there.blocks.get(there.blocks.last().unwrap()).unwrap().at;
+        let blocks = received(&there.paint(100));
+        let block = blocks.get(blocks.last().expect("the command came back")).unwrap();
+        assert!(block.ended.is_none());
+        assert_eq!(marks::millis(block.at), marks::millis(started));
+    }
+
+    /// What a terminal makes of a painting's marks.
+    fn received(painted: &[u8]) -> Arc<Blocks> {
+        let blocks = Arc::new(Blocks::default());
+        Scanner::new(blocks.clone()).feed(painted, &mut VecDeque::new());
+        blocks
     }
 
     #[test]
