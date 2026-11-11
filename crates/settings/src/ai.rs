@@ -35,7 +35,7 @@ impl Settings {
             field(
                 "Where",
                 self.typed("ai.url", ai.url.clone(), "http://localhost:11434/v1", 320.0),
-                Some("any OpenAI-compatible API; Ollama's on this machine by default"),
+                Some("Ollama on this machine by default; any other API gets the command and output you ask about"),
             ),
             field(
                 "Model",

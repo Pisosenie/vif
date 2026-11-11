@@ -26,6 +26,8 @@ zsh and bash mark their prompts and commands without you touching their rc files
 
 Off until you turn it on, and then local by default: vif asks [Ollama](https://ollama.com) on this machine, or any OpenAI-compatible API you point it at. In block mode `e` asks why a failed command failed, from the command, its exit code, its folder and the end of what it printed; the answer streams in under it, and Enter types the fix it suggests at the prompt. ⌘I turns the words at the prompt (`find files over 100 MB from this week`) into a command in their place. Nothing runs by itself, nothing is sent until you ask, tokens, keys and passwords are taken out of what is, and there's no account. It goes through `curl`, so vif carries no HTTP of its own, and an API key is read from an environment variable you name, never from `vif.toml`.
 
+> **Pointing `[ai] url` anywhere but this machine sends what you ask about off it.** With a cloud API, each question carries the command, its folder and up to `send` characters of what it printed (8000 by default) to that provider, under its terms. vif takes out the secrets it recognizes first, but it can't know every one: output with customer data, internal hostnames or a secret in an unusual shape goes as it is. Keep the default Ollama for anything you wouldn't paste into that provider's chat yourself, or lower `send`.
+
 ## Hints
 
 ![Hints: links, paths, commit hashes and an IP address on screen, each with a letter floating over it, and a bar that says what the next letter does](docs/hints.png)
@@ -369,7 +371,7 @@ alphabet = "asdfghjklqwertyuiopzxcvbnm"
 
 [ai]
 enabled = false            # nothing is asked or sent until this is true
-url = "http://localhost:11434/v1"   # Ollama; any OpenAI-compatible API works
+url = "http://localhost:11434/v1"   # Ollama; any OpenAI-compatible API works, but a remote one gets the output you ask about
 model = "qwen2.5-coder:7b"
 key_env = ""               # the environment variable with an API key, like "OPENAI_API_KEY"
 send = 8000                # the most characters of a command's output one question sends
