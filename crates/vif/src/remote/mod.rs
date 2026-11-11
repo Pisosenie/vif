@@ -105,14 +105,17 @@ impl Link {
             .any(|o| self.option(o).is_some_and(|v| v != "none"))
     }
 
-    /// The address ssh connects to, when it does so directly.
+    /// The host's address when ssh connects to it directly, an IPv4 one where there is one.
     fn address(&self) -> Option<IpAddr> {
         *self.address.get_or_init(|| {
             if self.proxied() {
                 return None;
             }
             let name = self.option("hostname").unwrap_or(&self.host);
-            (name, 22).to_socket_addrs().ok()?.next().map(|a| a.ip())
+            let found: Vec<IpAddr> = (name, 22).to_socket_addrs().ok()?.map(|a| a.ip()).collect();
+            // An IPv6 address with no route to it is the usual way UDP finds nothing, so IPv4
+            // goes first where there is one.
+            found.iter().find(|ip| ip.is_ipv4()).or(found.first()).copied()
         })
     }
 }
