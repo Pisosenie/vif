@@ -1,5 +1,6 @@
 //! Secrets taken out of what the archive keeps: `KEY=value` where the name says it's a secret,
-//! tokens in the shapes the big services give them, bearer headers, JWTs and private keys.
+//! passwords in URLs like `postgres://user:pass@host`, tokens in the shapes the big services
+//! give them, bearer headers, JWTs and private keys.
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -25,6 +26,10 @@ static SHAPED: LazyLock<Regex> = LazyLock::new(|| {
     .expect("pattern")
 });
 
+/// The password in `scheme://user:password@host`; the user may be empty, as in `redis://:pw@h`.
+static IN_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s/@]+@").expect("pattern"));
+
 static PEM: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)").expect("pattern")
 });
@@ -32,6 +37,7 @@ static PEM: LazyLock<Regex> = LazyLock::new(|| {
 /// `text` with every secret it shows replaced by dots.
 pub fn hide(text: &str) -> String {
     let text: Cow<str> = PEM.replace_all(text, "-----PRIVATE KEY HIDDEN-----");
+    let text = IN_URL.replace_all(&text, format!("${{1}}{HIDDEN}@"));
     let text = NAMED.replace_all(&text, format!("${{1}}${{2}}{HIDDEN}"));
     SHAPED.replace_all(&text, HIDDEN).into_owned()
 }
@@ -51,6 +57,28 @@ mod tests {
         assert_eq!(hide("key AKIAABCDEFGHIJKLMNOP here"), "key •••• here");
         let pem = "a\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blb\n-----END OPENSSH PRIVATE KEY-----\nz";
         assert_eq!(hide(pem), "a\n-----PRIVATE KEY HIDDEN-----\nz");
+    }
+
+    #[test]
+    fn passwords_in_urls_go() {
+        assert_eq!(
+            hide("psql postgres://app:s3cr3t-pw@db.internal:5432/main"),
+            "psql postgres://app:••••@db.internal:5432/main"
+        );
+        assert_eq!(
+            hide("REDIS=redis://:hunter2@cache:6379"),
+            "REDIS=redis://:••••@cache:6379"
+        );
+        assert_eq!(
+            hide("git clone https://bot:glpat-abc123@gitlab.com/x.git"),
+            "git clone https://bot:••••@gitlab.com/x.git"
+        );
+        // A port isn't a password, and an address without one is left alone.
+        assert_eq!(
+            hide("open http://localhost:8080/admin"),
+            "open http://localhost:8080/admin"
+        );
+        assert_eq!(hide("ssh://git@github.com/x"), "ssh://git@github.com/x");
     }
 
     #[test]
