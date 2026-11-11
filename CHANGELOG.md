@@ -2,6 +2,24 @@
 
 Every release, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/); until 1.0, a minor version may change the config.
 
+## Unreleased
+
+### Security
+
+- Passwords in URLs, like `postgres://app:pass@db`, are taken out of what the archive keeps and what is sent to a model.
+- vif uses `XDG_RUNTIME_DIR` for its sockets only when it is this user's own folder that nobody else can write into; otherwise it makes a closed folder of its own, as it does when there's none.
+- The README and the AI settings say plainly that an API that isn't on this machine gets the command and the output you ask about.
+
+### Added
+
+- A manual page, `man vif`, in every package.
+
+### Fixed
+
+- A session host whose thread panicked while holding its state took the shell with it; the state stays usable now and the shell runs on.
+- `vif ssh` over UDP tries the host's IPv4 address first, so a name with an IPv6 address that has no route no longer means three seconds of waiting and falling back to ssh.
+- A command still running when its session came back counted its time from the moment it came back, when it hadn't printed anything yet; it keeps its real start now.
+
 ## 0.1.8 — 2026-11-09
 
 ### Added
